@@ -1,0 +1,50 @@
+# Dépendances
+node_modules/
+vendor/
+
+# Builds et assets compilés
+/build/
+/dist/
+*.min.js
+*.min.css
+*.map
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE et éditeurs
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+debug.log
+error_log
+
+# Environnement
+.env
+.env.local
+.env.*.local
+
+# Tests
+/tests/coverage/
+.phpunit.result.cache
+
+# Cache
+*.cache
+.cache/
+
+# Archives
+*.zip
+*.tar.gz
+
+# Fichiers temporaires
+tmp/
+temp/
+
