@@ -1,0 +1,126 @@
+/**
+ * Styles de la page de réglages WBoard Connector.
+ *
+ * @package WBoard_Connector
+ */
+
+.wboard-settings-container {
+	max-width: 800px;
+}
+
+.wboard-card {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 20px;
+	margin-bottom: 20px;
+}
+
+.wboard-card h2 {
+	margin-top: 0;
+	padding-bottom: 10px;
+	border-bottom: 1px solid #c3c4c7;
+}
+
+/* Clé secrète */
+.wboard-secret-key-wrapper {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin: 15px 0;
+}
+
+.wboard-secret-key-wrapper input {
+	font-family: monospace;
+	flex: 1;
+	max-width: 400px;
+}
+
+.wboard-secret-key-wrapper .button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.wboard-secret-key-wrapper .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+	line-height: 1;
+}
+
+.wboard-key-actions {
+	display: flex;
+	align-items: center;
+	gap: 15px;
+	margin-top: 15px;
+}
+
+.wboard-key-actions .button {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.wboard-warning {
+	color: #996800;
+	font-style: italic;
+	font-size: 13px;
+}
+
+/* Statut */
+.wboard-status-table th {
+	width: 200px;
+}
+
+.wboard-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.wboard-status-ok {
+	color: #00a32a;
+}
+
+.wboard-status-error {
+	color: #d63638;
+}
+
+.wboard-status-unknown {
+	color: #787c82;
+}
+
+.wboard-status .dashicons {
+	font-size: 18px;
+	width: 18px;
+	height: 18px;
+}
+
+/* Feedback visuel */
+.wboard-copied {
+	color: #00a32a;
+	font-weight: 500;
+}
+
+.wboard-loading {
+	opacity: 0.6;
+	pointer-events: none;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+	.wboard-secret-key-wrapper {
+		flex-wrap: wrap;
+	}
+
+	.wboard-secret-key-wrapper input {
+		width: 100%;
+		max-width: none;
+	}
+
+	.wboard-key-actions {
+		flex-direction: column;
+		align-items: flex-start;
+	}
+}
