@@ -217,17 +217,208 @@ class WBoard_Connector_Collector {
 	/**
 	 * Récupère le statut de WPVivid Backup.
 	 *
+	 * Supporte WPVivid Backup (gratuit) et WPVivid Backup Pro.
+	 *
 	 * @return array Données de sauvegarde WPVivid.
 	 */
 	private function get_wpvivid_backup_status() {
-		// TODO: Implémenter après analyse du code source de WPVivid.
-		// Voir resources/wpvivid-backuprestore/ pour la structure des données.
+		// Vérifie si WPVivid est actif.
+		$is_free_active = is_plugin_active( 'wpvivid-backuprestore/wpvivid-backuprestore.php' );
+		$is_pro_active  = is_plugin_active( 'wpvivid-backup-pro/wpvivid-backup-pro.php' );
+
+		if ( ! $is_free_active && ! $is_pro_active ) {
+			return array(
+				'status'    => 'unknown',
+				'last_date' => null,
+				's3_url'    => null,
+				'provider'  => 'none',
+			);
+		}
+
+		$provider = $is_pro_active ? 'wpvivid_pro' : 'wpvivid';
+
+		// Récupère les infos de planification.
+		$schedule_info = $this->get_wpvivid_schedule_info();
+
+		// Récupère le dernier backup.
+		$last_backup = $this->get_wpvivid_last_backup();
+
+		// Détermine le statut global.
+		$status = $this->determine_wpvivid_status( $schedule_info, $last_backup );
+
 		return array(
-			'status'    => 'unknown',
-			'last_date' => null,
-			's3_url'    => null,
-			'provider'  => 'none',
+			'status'         => $status,
+			'last_date'      => $last_backup['date'] ?? null,
+			's3_url'         => $last_backup['remote_url'] ?? null,
+			'provider'       => $provider,
+			'schedule'       => $schedule_info,
+			'remote_type'    => $last_backup['remote_type'] ?? null,
 		);
+	}
+
+	/**
+	 * Récupère les informations de planification WPVivid.
+	 *
+	 * @return array Infos de planification.
+	 */
+	private function get_wpvivid_schedule_info() {
+		$schedule_event = wp_get_schedule( 'wpvivid_main_schedule_event' );
+		$next_scheduled = wp_next_scheduled( 'wpvivid_main_schedule_event' );
+
+		// Vérifie aussi les réglages enregistrés.
+		$schedule_setting = get_option( 'wpvivid_schedule_setting' );
+
+		$is_enabled = false;
+		$recurrence = null;
+
+		if ( false !== $schedule_event ) {
+			$is_enabled = true;
+			$recurrence = $schedule_event;
+		} elseif ( ! empty( $schedule_setting ) && ! empty( $schedule_setting['enable'] ) ) {
+			$is_enabled = true;
+			$recurrence = $schedule_setting['recurrence'] ?? null;
+		}
+
+		return array(
+			'enabled'    => $is_enabled,
+			'recurrence' => $recurrence,
+			'next_run'   => $next_scheduled ? gmdate( 'c', $next_scheduled ) : null,
+		);
+	}
+
+	/**
+	 * Récupère le dernier backup WPVivid.
+	 *
+	 * @return array|null Infos du dernier backup ou null.
+	 */
+	private function get_wpvivid_last_backup() {
+		$backup_list = get_option( 'wpvivid_backup_list' );
+
+		if ( empty( $backup_list ) || ! is_array( $backup_list ) ) {
+			return null;
+		}
+
+		// Convertit en array indexé si c'est un array associatif.
+		$backups = array_values( $backup_list );
+
+		// Trie par date de création (plus récent en premier).
+		usort(
+			$backups,
+			function ( $a, $b ) {
+				return ( $b['create_time'] ?? 0 ) <=> ( $a['create_time'] ?? 0 );
+			}
+		);
+
+		$latest = reset( $backups );
+
+		if ( empty( $latest ) || empty( $latest['create_time'] ) ) {
+			return null;
+		}
+
+		$result = array(
+			'date'        => gmdate( 'c', $latest['create_time'] ),
+			'timestamp'   => $latest['create_time'],
+			'type'        => $latest['type'] ?? 'unknown',
+			'has_local'   => ! empty( $latest['save_local'] ),
+			'has_remote'  => ! empty( $latest['remote'] ),
+			'remote_url'  => null,
+			'remote_type' => null,
+		);
+
+		// Extrait les infos de stockage distant.
+		if ( ! empty( $latest['remote'] ) && is_array( $latest['remote'] ) ) {
+			$remote = reset( $latest['remote'] );
+			if ( ! empty( $remote ) ) {
+				$result['remote_type'] = $remote['type'] ?? null;
+				$result['remote_url']  = $this->build_wpvivid_remote_url( $remote );
+			}
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Construit l'URL de stockage distant WPVivid.
+	 *
+	 * @param array $remote Configuration du stockage distant.
+	 *
+	 * @return string|null URL ou null.
+	 */
+	private function build_wpvivid_remote_url( $remote ) {
+		$type = $remote['type'] ?? '';
+
+		switch ( $type ) {
+			case 'amazons3':
+			case 's3':
+			case 's3compat':
+				if ( ! empty( $remote['bucket'] ) ) {
+					$path = trim( $remote['path'] ?? '', '/' );
+					return "s3://{$remote['bucket']}" . ( $path ? "/{$path}" : '' );
+				}
+				break;
+
+			case 'b2':
+			case 'backblaze':
+				if ( ! empty( $remote['bucket'] ) ) {
+					$path = trim( $remote['path'] ?? '', '/' );
+					return "b2://{$remote['bucket']}" . ( $path ? "/{$path}" : '' );
+				}
+				break;
+
+			case 'dropbox':
+				return 'dropbox://' . ( $remote['path'] ?? '/' );
+
+			case 'googledrive':
+				return 'googledrive://' . ( $remote['folder_id'] ?? 'root' );
+
+			case 'onedrive':
+				return 'onedrive://' . ( $remote['folder_id'] ?? 'root' );
+
+			case 'ftp':
+			case 'sftp':
+				if ( ! empty( $remote['host'] ) ) {
+					return "{$type}://{$remote['host']}" . ( $remote['path'] ?? '/' );
+				}
+				break;
+		}
+
+		return $remote['url'] ?? null;
+	}
+
+	/**
+	 * Détermine le statut global des backups WPVivid.
+	 *
+	 * @param array      $schedule_info Infos de planification.
+	 * @param array|null $last_backup   Dernier backup.
+	 *
+	 * @return string Statut : ok, warning, error.
+	 */
+	private function determine_wpvivid_status( $schedule_info, $last_backup ) {
+		// Pas de backup du tout.
+		if ( null === $last_backup ) {
+			return 'error';
+		}
+
+		$last_timestamp = $last_backup['timestamp'] ?? 0;
+		$now            = time();
+		$age_days       = ( $now - $last_timestamp ) / DAY_IN_SECONDS;
+
+		// Backup trop ancien (plus de 7 jours).
+		if ( $age_days > 7 ) {
+			return 'error';
+		}
+
+		// Backup entre 3 et 7 jours.
+		if ( $age_days > 3 ) {
+			return 'warning';
+		}
+
+		// Pas de planification active.
+		if ( empty( $schedule_info['enabled'] ) ) {
+			return 'warning';
+		}
+
+		return 'ok';
 	}
 
 	/**
