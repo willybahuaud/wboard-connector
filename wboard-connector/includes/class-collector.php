@@ -64,30 +64,45 @@ class WBoard_Connector_Collector {
 	/**
 	 * Récupère les mises à jour du core WordPress disponibles.
 	 *
-	 * @return array Liste des mises à jour core.
+	 * WordPress peut proposer plusieurs versions (branche actuelle + majeure).
+	 * On ne retourne que la version la plus récente pour éviter les doublons.
+	 *
+	 * @return array Liste des mises à jour core (max 1 élément).
 	 */
 	private function get_core_updates() {
-		$updates      = array();
 		$core_updates = get_site_transient( 'update_core' );
 
-		if ( ! empty( $core_updates->updates ) && is_array( $core_updates->updates ) ) {
-			foreach ( $core_updates->updates as $update ) {
-				// Ignore la version actuelle et les versions de développement.
-				if ( 'upgrade' !== $update->response ) {
-					continue;
-				}
+		if ( empty( $core_updates->updates ) || ! is_array( $core_updates->updates ) ) {
+			return array();
+		}
 
-				$updates[] = array(
-					'type'            => 'core',
-					'slug'            => 'wordpress',
-					'name'            => 'WordPress',
-					'current_version' => get_bloginfo( 'version' ),
-					'new_version'     => $update->current,
-				);
+		$latest_version = null;
+
+		foreach ( $core_updates->updates as $update ) {
+			// Ignore la version actuelle et les versions de développement.
+			if ( 'upgrade' !== $update->response ) {
+				continue;
+			}
+
+			// Garde la version la plus récente.
+			if ( null === $latest_version || version_compare( $update->current, $latest_version, '>' ) ) {
+				$latest_version = $update->current;
 			}
 		}
 
-		return $updates;
+		if ( null === $latest_version ) {
+			return array();
+		}
+
+		return array(
+			array(
+				'type'            => 'core',
+				'slug'            => 'wordpress',
+				'name'            => 'WordPress',
+				'current_version' => get_bloginfo( 'version' ),
+				'new_version'     => $latest_version,
+			),
+		);
 	}
 
 	/**
