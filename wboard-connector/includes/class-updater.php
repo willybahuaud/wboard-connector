@@ -193,16 +193,23 @@ class WBoard_Connector_Updater {
 			return $source;
 		}
 
-		$expected_dir = trailingslashit( $remote_source ) . $this->plugin_slug;
+		// Normalise les chemins pour comparaison (supprime trailing slash).
+		$source_normalized   = untrailingslashit( $source );
+		$expected_dir        = untrailingslashit( trailingslashit( $remote_source ) . $this->plugin_slug );
 
 		// Si le dossier a déjà le bon nom, on ne fait rien.
-		if ( $source === $expected_dir ) {
+		if ( $source_normalized === $expected_dir ) {
+			return $source;
+		}
+
+		// Vérifie si le nom du dossier source se termine par le slug attendu.
+		if ( basename( $source_normalized ) === $this->plugin_slug ) {
 			return $source;
 		}
 
 		// Renomme le dossier.
-		if ( $wp_filesystem->move( $source, $expected_dir ) ) {
-			return $expected_dir;
+		if ( $wp_filesystem->move( $source, trailingslashit( $expected_dir ) ) ) {
+			return trailingslashit( $expected_dir );
 		}
 
 		return new WP_Error(
