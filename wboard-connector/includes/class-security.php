@@ -28,6 +28,20 @@ class WBoard_Connector_Security {
 	const TIMESTAMP_TOLERANCE = 300; // 5 minutes.
 
 	/**
+	 * Nombre maximum de requêtes par minute.
+	 *
+	 * @var int
+	 */
+	const RATE_LIMIT_MAX_REQUESTS = 30;
+
+	/**
+	 * Fenêtre de temps pour le rate limiting en secondes.
+	 *
+	 * @var int
+	 */
+	const RATE_LIMIT_WINDOW = 60;
+
+	/**
 	 * Nom du header contenant le timestamp.
 	 *
 	 * @var string
@@ -51,13 +65,19 @@ class WBoard_Connector_Security {
 	/**
 	 * Vérifie si une requête est authentique.
 	 *
-	 * Contrôle la signature HMAC et la validité du timestamp.
+	 * Contrôle le rate limiting, la signature HMAC et la validité du timestamp.
 	 *
 	 * @param WP_REST_Request $request La requête REST à vérifier.
 	 *
 	 * @return bool|WP_Error True si valide, WP_Error sinon.
 	 */
 	public function verify_request( WP_REST_Request $request ) {
+		// Vérifie le rate limiting avant tout.
+		$rate_limit_check = $this->check_rate_limit();
+		if ( is_wp_error( $rate_limit_check ) ) {
+			return $rate_limit_check;
+		}
+
 		$timestamp = $request->get_header( 'X-WBoard-Timestamp' );
 		$signature = $request->get_header( 'X-WBoard-Signature' );
 
@@ -86,6 +106,64 @@ class WBoard_Connector_Security {
 		$this->update_last_request_time();
 
 		return true;
+	}
+
+	/**
+	 * Vérifie le rate limiting par IP.
+	 *
+	 * @return bool|WP_Error True si OK, WP_Error si limite dépassée.
+	 */
+	private function check_rate_limit() {
+		$ip = $this->get_client_ip();
+		$transient_key = 'wboard_rate_' . md5( $ip );
+		$requests = get_transient( $transient_key );
+
+		if ( false === $requests ) {
+			$requests = 0;
+		}
+
+		$requests++;
+
+		if ( $requests > self::RATE_LIMIT_MAX_REQUESTS ) {
+			return new WP_Error(
+				'wboard_rate_limit_exceeded',
+				__( 'Trop de requêtes. Réessayez dans une minute.', 'wboard-connector' ),
+				array( 'status' => 429 )
+			);
+		}
+
+		set_transient( $transient_key, $requests, self::RATE_LIMIT_WINDOW );
+
+		return true;
+	}
+
+	/**
+	 * Récupère l'adresse IP du client.
+	 *
+	 * @return string Adresse IP.
+	 */
+	private function get_client_ip() {
+		$ip_keys = array(
+			'HTTP_CF_CONNECTING_IP', // Cloudflare.
+			'HTTP_X_FORWARDED_FOR',
+			'HTTP_X_REAL_IP',
+			'REMOTE_ADDR',
+		);
+
+		foreach ( $ip_keys as $key ) {
+			if ( ! empty( $_SERVER[ $key ] ) ) {
+				$ip = sanitize_text_field( wp_unslash( $_SERVER[ $key ] ) );
+				// X-Forwarded-For peut contenir plusieurs IPs, prendre la première.
+				if ( strpos( $ip, ',' ) !== false ) {
+					$ip = trim( explode( ',', $ip )[0] );
+				}
+				if ( filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+					return $ip;
+				}
+			}
+		}
+
+		return '0.0.0.0';
 	}
 
 	/**
