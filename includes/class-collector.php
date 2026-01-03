@@ -259,30 +259,83 @@ class WBoard_Connector_Collector {
 	/**
 	 * Récupère les informations de planification WPVivid.
 	 *
-	 * @return array Infos de planification.
+	 * Détecte les schedules classiques et incrémentaux.
+	 *
+	 * @return array Infos de planification détaillées.
 	 */
 	private function get_wpvivid_schedule_info() {
+		// Schedule classique (version gratuite et pro).
+		$classic_enabled    = false;
+		$classic_recurrence = null;
+		$classic_next_run   = null;
+
+		// Vérifie le cron WordPress.
 		$schedule_event = wp_get_schedule( 'wpvivid_main_schedule_event' );
 		$next_scheduled = wp_next_scheduled( 'wpvivid_main_schedule_event' );
 
-		// Vérifie aussi les réglages enregistrés.
-		$schedule_setting = get_option( 'wpvivid_schedule_setting' );
-
-		$is_enabled = false;
-		$recurrence = null;
-
 		if ( false !== $schedule_event ) {
-			$is_enabled = true;
-			$recurrence = $schedule_event;
-		} elseif ( ! empty( $schedule_setting ) && ! empty( $schedule_setting['enable'] ) ) {
-			$is_enabled = true;
-			$recurrence = $schedule_setting['recurrence'] ?? null;
+			$classic_enabled    = true;
+			$classic_recurrence = $schedule_event;
+			$classic_next_run   = $next_scheduled ? gmdate( 'c', $next_scheduled ) : null;
+		}
+
+		// Vérifie aussi les réglages enregistrés (version gratuite).
+		if ( ! $classic_enabled ) {
+			$schedule_setting = get_option( 'wpvivid_schedule_setting' );
+			if ( ! empty( $schedule_setting ) && ! empty( $schedule_setting['enable'] ) ) {
+				$classic_enabled    = true;
+				$classic_recurrence = $schedule_setting['recurrence'] ?? null;
+			}
+		}
+
+		// Vérifie schedule_setting2 (WPVivid Pro custom schedules).
+		if ( ! $classic_enabled ) {
+			$schedule_setting2 = get_option( 'wpvivid_schedule_setting2' );
+			if ( ! empty( $schedule_setting2 ) && is_array( $schedule_setting2 ) ) {
+				foreach ( $schedule_setting2 as $schedule ) {
+					if ( ! empty( $schedule['enable'] ) || ! empty( $schedule['status'] ) ) {
+						$classic_enabled    = true;
+						$classic_recurrence = $schedule['recurrence'] ?? $schedule['frequency'] ?? null;
+						break;
+					}
+				}
+			}
+		}
+
+		// Schedule incrémental (WPVivid Pro uniquement).
+		$incremental_enabled    = false;
+		$incremental_recurrence = null;
+
+		$incremental_schedules = get_option( 'wpvivid_incremental_schedules' );
+		if ( ! empty( $incremental_schedules ) && is_array( $incremental_schedules ) ) {
+			foreach ( $incremental_schedules as $schedule ) {
+				if ( ! empty( $schedule['enable'] ) || ! empty( $schedule['status'] ) ) {
+					$incremental_enabled    = true;
+					$incremental_recurrence = $schedule['recurrence'] ?? $schedule['frequency'] ?? null;
+					break;
+				}
+			}
+		}
+
+		// Vérifie aussi schedule_addon_setting pour incremental.
+		if ( ! $incremental_enabled ) {
+			$addon_setting = get_option( 'wpvivid_schedule_addon_setting' );
+			if ( ! empty( $addon_setting ) && is_array( $addon_setting ) ) {
+				if ( ! empty( $addon_setting['incremental_enable'] ) ) {
+					$incremental_enabled    = true;
+					$incremental_recurrence = $addon_setting['incremental_recurrence'] ?? null;
+				}
+			}
 		}
 
 		return array(
-			'enabled'    => $is_enabled,
-			'recurrence' => $recurrence,
-			'next_run'   => $next_scheduled ? gmdate( 'c', $next_scheduled ) : null,
+			'enabled'                 => $classic_enabled || $incremental_enabled,
+			'recurrence'              => $classic_recurrence ?? $incremental_recurrence,
+			'next_run'                => $classic_next_run,
+			'classic_enabled'         => $classic_enabled,
+			'classic_recurrence'      => $classic_recurrence,
+			'incremental_enabled'     => $incremental_enabled,
+			'incremental_recurrence'  => $incremental_recurrence,
 		);
 	}
 
