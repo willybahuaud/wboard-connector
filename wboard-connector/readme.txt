@@ -1,5 +1,5 @@
 === WBoard Connector ===
-Contributors: willy
+Contributors: willybahuaud
 Tags: monitoring, dashboard, backup, security, management
 Requires at least: 6.0
 Tested up to: 6.7
