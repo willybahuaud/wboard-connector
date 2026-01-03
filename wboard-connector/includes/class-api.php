@@ -122,6 +122,10 @@ class WBoard_Connector_Api {
 			'backup'         => $collector->get_backup_status(),
 			'security'       => $collector->get_security_status(),
 			'admin_users'    => $collector->get_admin_users(),
+			'installed'      => array(
+				'plugins' => $collector->get_installed_plugins(),
+				'themes'  => $collector->get_installed_themes(),
+			),
 		);
 
 		return new WP_REST_Response( $data, 200 );

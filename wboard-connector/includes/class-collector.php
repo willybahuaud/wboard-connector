@@ -259,45 +259,223 @@ class WBoard_Connector_Collector {
 	/**
 	 * Récupère les informations de planification WPVivid.
 	 *
-	 * @return array Infos de planification.
+	 * Détecte les schedules classiques et incrémentaux.
+	 *
+	 * @return array Infos de planification détaillées.
 	 */
 	private function get_wpvivid_schedule_info() {
+		// Schedule classique (version gratuite et pro).
+		$classic_enabled    = false;
+		$classic_recurrence = null;
+		$classic_next_run   = null;
+
+		// Vérifie le cron WordPress.
 		$schedule_event = wp_get_schedule( 'wpvivid_main_schedule_event' );
 		$next_scheduled = wp_next_scheduled( 'wpvivid_main_schedule_event' );
 
-		// Vérifie aussi les réglages enregistrés.
-		$schedule_setting = get_option( 'wpvivid_schedule_setting' );
-
-		$is_enabled = false;
-		$recurrence = null;
-
 		if ( false !== $schedule_event ) {
-			$is_enabled = true;
-			$recurrence = $schedule_event;
-		} elseif ( ! empty( $schedule_setting ) && ! empty( $schedule_setting['enable'] ) ) {
-			$is_enabled = true;
-			$recurrence = $schedule_setting['recurrence'] ?? null;
+			$classic_enabled    = true;
+			$classic_recurrence = $schedule_event;
+			$classic_next_run   = $next_scheduled ? gmdate( 'c', $next_scheduled ) : null;
+		}
+
+		// Vérifie aussi les réglages enregistrés (version gratuite).
+		if ( ! $classic_enabled ) {
+			$schedule_setting = get_option( 'wpvivid_schedule_setting' );
+			if ( ! empty( $schedule_setting ) && ! empty( $schedule_setting['enable'] ) ) {
+				$classic_enabled    = true;
+				$classic_recurrence = $schedule_setting['recurrence'] ?? null;
+			}
+		}
+
+		// Vérifie schedule_setting2 (WPVivid Pro custom schedules).
+		if ( ! $classic_enabled ) {
+			$schedule_setting2 = get_option( 'wpvivid_schedule_setting2' );
+			if ( ! empty( $schedule_setting2 ) && is_array( $schedule_setting2 ) ) {
+				foreach ( $schedule_setting2 as $schedule ) {
+					if ( ! empty( $schedule['enable'] ) || ! empty( $schedule['status'] ) ) {
+						$classic_enabled    = true;
+						$classic_recurrence = $schedule['recurrence'] ?? $schedule['frequency'] ?? null;
+						break;
+					}
+				}
+			}
+		}
+
+		// Schedule incrémental (WPVivid Pro uniquement).
+		$incremental_enabled    = false;
+		$incremental_recurrence = null;
+
+		$incremental_schedules = get_option( 'wpvivid_incremental_schedules' );
+		if ( ! empty( $incremental_schedules ) && is_array( $incremental_schedules ) ) {
+			foreach ( $incremental_schedules as $schedule ) {
+				if ( ! empty( $schedule['enable'] ) || ! empty( $schedule['status'] ) ) {
+					$incremental_enabled    = true;
+					$incremental_recurrence = $schedule['recurrence'] ?? $schedule['frequency'] ?? null;
+					break;
+				}
+			}
+		}
+
+		// Vérifie aussi schedule_addon_setting pour incremental.
+		if ( ! $incremental_enabled ) {
+			$addon_setting = get_option( 'wpvivid_schedule_addon_setting' );
+			if ( ! empty( $addon_setting ) && is_array( $addon_setting ) ) {
+				if ( ! empty( $addon_setting['incremental_enable'] ) ) {
+					$incremental_enabled    = true;
+					$incremental_recurrence = $addon_setting['incremental_recurrence'] ?? null;
+				}
+			}
 		}
 
 		return array(
-			'enabled'    => $is_enabled,
-			'recurrence' => $recurrence,
-			'next_run'   => $next_scheduled ? gmdate( 'c', $next_scheduled ) : null,
+			'enabled'                 => $classic_enabled || $incremental_enabled,
+			'recurrence'              => $classic_recurrence ?? $incremental_recurrence,
+			'next_run'                => $classic_next_run,
+			'classic_enabled'         => $classic_enabled,
+			'classic_recurrence'      => $classic_recurrence,
+			'incremental_enabled'     => $incremental_enabled,
+			'incremental_recurrence'  => $incremental_recurrence,
 		);
 	}
 
 	/**
 	 * Récupère le dernier backup WPVivid.
 	 *
+	 * Supporte à la fois WPVivid gratuit (wpvivid_backup_list)
+	 * et WPVivid Pro (wpvivid_backup_reports).
+	 *
 	 * @return array|null Infos du dernier backup ou null.
 	 */
 	private function get_wpvivid_last_backup() {
+		// Essaie d'abord wpvivid_backup_reports (WPVivid Pro).
+		$backup_reports = get_option( 'wpvivid_backup_reports' );
+
+		if ( ! empty( $backup_reports ) && is_array( $backup_reports ) ) {
+			return $this->parse_wpvivid_pro_backup( $backup_reports );
+		}
+
+		// Fallback sur wpvivid_backup_list (version gratuite).
 		$backup_list = get_option( 'wpvivid_backup_list' );
 
-		if ( empty( $backup_list ) || ! is_array( $backup_list ) ) {
+		if ( ! empty( $backup_list ) && is_array( $backup_list ) ) {
+			return $this->parse_wpvivid_free_backup( $backup_list );
+		}
+
+		return null;
+	}
+
+	/**
+	 * Parse les backups WPVivid Pro depuis wpvivid_backup_reports.
+	 *
+	 * @param array $backup_reports Les rapports de backup.
+	 *
+	 * @return array|null Infos du dernier backup ou null.
+	 */
+	private function parse_wpvivid_pro_backup( $backup_reports ) {
+		// Convertit en array et trie par backup_time (plus récent en premier).
+		$reports = array_values( $backup_reports );
+
+		usort(
+			$reports,
+			function ( $a, $b ) {
+				return ( $b['backup_time'] ?? 0 ) <=> ( $a['backup_time'] ?? 0 );
+			}
+		);
+
+		$latest = reset( $reports );
+
+		if ( empty( $latest ) || empty( $latest['backup_time'] ) ) {
 			return null;
 		}
 
+		// Vérifie si le backup a réussi.
+		$status = $latest['status'] ?? '';
+		if ( 'Succeeded' !== $status && 'completed' !== strtolower( $status ) ) {
+			return array(
+				'date'        => gmdate( 'c', $latest['backup_time'] ),
+				'timestamp'   => $latest['backup_time'],
+				'type'        => 'unknown',
+				'has_local'   => false,
+				'has_remote'  => false,
+				'remote_url'  => null,
+				'remote_type' => null,
+				'failed'      => true,
+			);
+		}
+
+		// Récupère les infos de stockage distant depuis upload_setting.
+		$remote_info = $this->get_wpvivid_pro_remote_info();
+
+		return array(
+			'date'        => gmdate( 'c', $latest['backup_time'] ),
+			'timestamp'   => $latest['backup_time'],
+			'type'        => 'manual',
+			'has_local'   => true,
+			'has_remote'  => ! empty( $remote_info['type'] ),
+			'remote_url'  => $remote_info['url'] ?? null,
+			'remote_type' => $remote_info['type'] ?? null,
+		);
+	}
+
+	/**
+	 * Récupère les infos de stockage distant pour WPVivid Pro.
+	 *
+	 * @return array Infos remote (type, url) ou array vide.
+	 */
+	private function get_wpvivid_pro_remote_info() {
+		$upload_setting = get_option( 'wpvivid_upload_setting' );
+		$user_history   = get_option( 'wpvivid_user_history' );
+
+		if ( empty( $upload_setting ) || ! is_array( $upload_setting ) ) {
+			return array();
+		}
+
+		// Récupère l'ID du remote sélectionné.
+		$selected_remote_id = null;
+
+		if ( ! empty( $user_history['remote_selected'] ) && is_array( $user_history['remote_selected'] ) ) {
+			$selected_remote_id = reset( $user_history['remote_selected'] );
+		}
+
+		// Si pas de sélection dans user_history, cherche dans upload_setting.
+		if ( empty( $selected_remote_id ) && ! empty( $upload_setting['remote_selected'] ) ) {
+			$selected_remote_id = is_array( $upload_setting['remote_selected'] )
+				? reset( $upload_setting['remote_selected'] )
+				: $upload_setting['remote_selected'];
+		}
+
+		// Récupère la config du remote.
+		if ( empty( $selected_remote_id ) || empty( $upload_setting[ $selected_remote_id ] ) ) {
+			// Fallback : prend le premier remote disponible.
+			foreach ( $upload_setting as $key => $value ) {
+				if ( is_array( $value ) && ! empty( $value['type'] ) ) {
+					$selected_remote_id = $key;
+					break;
+				}
+			}
+		}
+
+		if ( empty( $selected_remote_id ) || empty( $upload_setting[ $selected_remote_id ] ) ) {
+			return array();
+		}
+
+		$remote_config = $upload_setting[ $selected_remote_id ];
+
+		return array(
+			'type' => $remote_config['type'] ?? null,
+			'url'  => $this->build_wpvivid_remote_url( $remote_config ),
+		);
+	}
+
+	/**
+	 * Parse les backups WPVivid gratuit depuis wpvivid_backup_list.
+	 *
+	 * @param array $backup_list La liste des backups.
+	 *
+	 * @return array|null Infos du dernier backup ou null.
+	 */
+	private function parse_wpvivid_free_backup( $backup_list ) {
 		// Convertit en array indexé si c'est un array associatif.
 		$backups = array_values( $backup_list );
 
@@ -463,5 +641,58 @@ class WBoard_Connector_Collector {
 		}
 
 		return $users;
+	}
+
+	/**
+	 * Retourne la liste des plugins installés.
+	 *
+	 * @return array Liste des plugins avec slug, nom, version et statut actif.
+	 */
+	public function get_installed_plugins() {
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		$plugins        = get_plugins();
+		$active_plugins = get_option( 'active_plugins', array() );
+		$installed      = array();
+
+		foreach ( $plugins as $file => $data ) {
+			$slug = dirname( $file );
+			if ( '.' === $slug ) {
+				$slug = basename( $file, '.php' );
+			}
+
+			$installed[] = array(
+				'slug'      => $slug,
+				'name'      => $data['Name'],
+				'version'   => $data['Version'],
+				'is_active' => in_array( $file, $active_plugins, true ),
+			);
+		}
+
+		return $installed;
+	}
+
+	/**
+	 * Retourne la liste des thèmes installés.
+	 *
+	 * @return array Liste des thèmes avec slug, nom, version et statut actif.
+	 */
+	public function get_installed_themes() {
+		$themes       = wp_get_themes();
+		$active_theme = get_stylesheet();
+		$installed    = array();
+
+		foreach ( $themes as $slug => $theme ) {
+			$installed[] = array(
+				'slug'      => $slug,
+				'name'      => $theme->get( 'Name' ),
+				'version'   => $theme->get( 'Version' ),
+				'is_active' => ( $slug === $active_theme ),
+			);
+		}
+
+		return $installed;
 	}
 }
