@@ -303,27 +303,20 @@ class WBoard_Connector_Collector {
 		}
 
 		// Schedule incrémental (WPVivid Pro uniquement).
+		// Note : Dans WPVivid Pro, la présence d'un schedule dans wpvivid_incremental_schedules
+		// signifie qu'il est actif. Il n'y a pas de clé 'enable' ou 'status'.
 		$incremental_enabled    = false;
 		$incremental_recurrence = null;
 
 		$incremental_schedules = get_option( 'wpvivid_incremental_schedules' );
 		if ( ! empty( $incremental_schedules ) && is_array( $incremental_schedules ) ) {
 			foreach ( $incremental_schedules as $schedule ) {
-				if ( ! empty( $schedule['enable'] ) || ! empty( $schedule['status'] ) ) {
+				// Un schedule incrémental existe = il est actif.
+				// On vérifie qu'il a bien les clés attendues pour confirmer que c'est valide.
+				if ( ! empty( $schedule['id'] ) || ! empty( $schedule['incremental_recurrence'] ) ) {
 					$incremental_enabled    = true;
-					$incremental_recurrence = $schedule['recurrence'] ?? $schedule['frequency'] ?? null;
+					$incremental_recurrence = $schedule['incremental_recurrence'] ?? null;
 					break;
-				}
-			}
-		}
-
-		// Vérifie aussi schedule_addon_setting pour incremental.
-		if ( ! $incremental_enabled ) {
-			$addon_setting = get_option( 'wpvivid_schedule_addon_setting' );
-			if ( ! empty( $addon_setting ) && is_array( $addon_setting ) ) {
-				if ( ! empty( $addon_setting['incremental_enable'] ) ) {
-					$incremental_enabled    = true;
-					$incremental_recurrence = $addon_setting['incremental_recurrence'] ?? null;
 				}
 			}
 		}
