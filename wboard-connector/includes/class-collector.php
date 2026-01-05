@@ -336,26 +336,86 @@ class WBoard_Connector_Collector {
 	 * Récupère le dernier backup WPVivid.
 	 *
 	 * Supporte à la fois WPVivid gratuit (wpvivid_backup_list)
-	 * et WPVivid Pro (wpvivid_backup_reports).
+	 * et WPVivid Pro (wpvivid_backup_reports + wpvivid_incremental_backup_data).
 	 *
 	 * @return array|null Infos du dernier backup ou null.
 	 */
 	private function get_wpvivid_last_backup() {
-		// Essaie d'abord wpvivid_backup_reports (WPVivid Pro).
+		$latest_timestamp = 0;
+		$latest_backup    = null;
+
+		// 1. Vérifie wpvivid_backup_reports (backups manuels/classiques WPVivid Pro).
 		$backup_reports = get_option( 'wpvivid_backup_reports' );
-
 		if ( ! empty( $backup_reports ) && is_array( $backup_reports ) ) {
-			return $this->parse_wpvivid_pro_backup( $backup_reports );
+			$reports_backup = $this->parse_wpvivid_pro_backup( $backup_reports );
+			if ( $reports_backup && ( $reports_backup['timestamp'] ?? 0 ) > $latest_timestamp ) {
+				$latest_timestamp = $reports_backup['timestamp'];
+				$latest_backup    = $reports_backup;
+			}
 		}
 
-		// Fallback sur wpvivid_backup_list (version gratuite).
-		$backup_list = get_option( 'wpvivid_backup_list' );
-
-		if ( ! empty( $backup_list ) && is_array( $backup_list ) ) {
-			return $this->parse_wpvivid_free_backup( $backup_list );
+		// 2. Vérifie wpvivid_incremental_backup_data (itérations incrémentales WPVivid Pro).
+		$incremental_timestamp = $this->get_wpvivid_incremental_last_timestamp();
+		if ( $incremental_timestamp > $latest_timestamp ) {
+			$latest_timestamp = $incremental_timestamp;
+			// Met à jour la date du backup existant ou crée un nouveau.
+			if ( $latest_backup ) {
+				$latest_backup['date']      = gmdate( 'c', $incremental_timestamp );
+				$latest_backup['timestamp'] = $incremental_timestamp;
+			} else {
+				$remote_info    = $this->get_wpvivid_pro_remote_info();
+				$latest_backup  = array(
+					'date'        => gmdate( 'c', $incremental_timestamp ),
+					'timestamp'   => $incremental_timestamp,
+					'type'        => 'incremental',
+					'has_local'   => false,
+					'has_remote'  => ! empty( $remote_info['type'] ),
+					'remote_url'  => $remote_info['url'] ?? null,
+					'remote_type' => $remote_info['type'] ?? null,
+				);
+			}
 		}
 
-		return null;
+		// 3. Fallback sur wpvivid_backup_list (version gratuite).
+		if ( ! $latest_backup ) {
+			$backup_list = get_option( 'wpvivid_backup_list' );
+			if ( ! empty( $backup_list ) && is_array( $backup_list ) ) {
+				$latest_backup = $this->parse_wpvivid_free_backup( $backup_list );
+			}
+		}
+
+		return $latest_backup;
+	}
+
+	/**
+	 * Récupère le timestamp de la dernière itération incrémentale.
+	 *
+	 * @return int Timestamp ou 0 si aucun.
+	 */
+	private function get_wpvivid_incremental_last_timestamp() {
+		$incremental_data = get_option( 'wpvivid_incremental_backup_data' );
+
+		if ( empty( $incremental_data ) || ! is_array( $incremental_data ) ) {
+			return 0;
+		}
+
+		$latest_timestamp = 0;
+
+		foreach ( $incremental_data as $schedule_data ) {
+			// Vérifie les fichiers.
+			$files_time = $schedule_data['files']['versions']['backup_time'] ?? 0;
+			if ( $files_time > $latest_timestamp ) {
+				$latest_timestamp = $files_time;
+			}
+
+			// Vérifie la base de données.
+			$db_time = $schedule_data['db']['versions']['backup_time'] ?? 0;
+			if ( $db_time > $latest_timestamp ) {
+				$latest_timestamp = $db_time;
+			}
+		}
+
+		return $latest_timestamp;
 	}
 
 	/**
