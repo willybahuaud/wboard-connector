@@ -126,6 +126,7 @@ class WBoard_Connector_Api {
 				'plugins' => $collector->get_installed_plugins(),
 				'themes'  => $collector->get_installed_themes(),
 			),
+			'cron'           => $collector->get_cron_status(),
 		);
 
 		return new WP_REST_Response( $data, 200 );

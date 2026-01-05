@@ -695,4 +695,64 @@ class WBoard_Connector_Collector {
 
 		return $installed;
 	}
+
+	/**
+	 * Retourne le statut du système WP-Cron.
+	 *
+	 * Détecte si DISABLE_WP_CRON est activé et compte les tâches en retard.
+	 *
+	 * @return array Données cron : disabled, overdue_count, last_run.
+	 */
+	public function get_cron_status() {
+		$cron_disabled  = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
+		$overdue_count  = 0;
+		$last_run       = null;
+		$now            = time();
+		$overdue_threshold = $now - HOUR_IN_SECONDS; // Tâches de plus d'1 heure.
+
+		// Récupère toutes les tâches planifiées.
+		$cron_array = _get_cron_array();
+
+		if ( ! empty( $cron_array ) && is_array( $cron_array ) ) {
+			foreach ( $cron_array as $timestamp => $hooks ) {
+				// Ignore les timestamps invalides.
+				if ( ! is_numeric( $timestamp ) ) {
+					continue;
+				}
+
+				// Compte les tâches en retard (planifiées il y a plus d'1h).
+				if ( $timestamp < $overdue_threshold ) {
+					foreach ( $hooks as $hook => $events ) {
+						$overdue_count += count( $events );
+					}
+				}
+			}
+		}
+
+		// Récupère le timestamp du dernier cron exécuté.
+		$last_run_timestamp = get_option( 'wboard_cron_last_run' );
+		if ( $last_run_timestamp ) {
+			$last_run = gmdate( 'c', (int) $last_run_timestamp );
+		}
+
+		return array(
+			'disabled'      => $cron_disabled,
+			'overdue_count' => $overdue_count,
+			'last_run'      => $last_run,
+		);
+	}
+
+	/**
+	 * Enregistre le timestamp du dernier cron exécuté.
+	 *
+	 * Appelé via le hook 'wp_loaded' pour tracker l'exécution du cron.
+	 *
+	 * @return void
+	 */
+	public static function track_cron_execution() {
+		// Vérifie si c'est une requête cron.
+		if ( defined( 'DOING_CRON' ) && DOING_CRON ) {
+			update_option( 'wboard_cron_last_run', time(), false );
+		}
+	}
 }

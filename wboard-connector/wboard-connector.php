@@ -3,7 +3,7 @@
  * Plugin Name: WBoard Connector
  * Plugin URI: https://github.com/wboard/connector
  * Description: Connecteur pour WBoard - Permet la supervision centralisée du site WordPress.
- * Version: 1.0.8
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 7.3
  * Author: Willy bahuaud
@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Constantes du plugin.
  */
-define( 'WBOARD_CONNECTOR_VERSION', '1.0.8' );
+define( 'WBOARD_CONNECTOR_VERSION', '1.1.0' );
 define( 'WBOARD_CONNECTOR_FILE', __FILE__ );
 define( 'WBOARD_CONNECTOR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WBOARD_CONNECTOR_URL', plugin_dir_url( __FILE__ ) );
@@ -107,3 +107,12 @@ function wboard_connector_deactivate() {
 	delete_transient( 'wboard_connector_last_request' );
 }
 register_deactivation_hook( __FILE__, 'wboard_connector_deactivate' );
+
+/**
+ * Enregistre le timestamp de la dernière exécution cron.
+ *
+ * Permet de suivre si le système WP-Cron fonctionne correctement.
+ *
+ * @return void
+ */
+add_action( 'wp_loaded', array( 'WBoard_Connector_Collector', 'track_cron_execution' ) );
