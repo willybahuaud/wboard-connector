@@ -162,16 +162,36 @@ class WBoard_Connector_Multisite {
 	}
 
 	/**
-	 * Retourne le nombre de sites dans le réseau.
+	 * Retourne le nombre de sites actifs dans le réseau.
 	 *
-	 * @return int Nombre de sites, ou 1 si mono-site.
+	 * Exclut les sites archivés, supprimés et spam.
+	 *
+	 * @return int Nombre de sites actifs, ou 1 si mono-site.
 	 */
 	public static function get_site_count() {
 		if ( ! self::is_multisite() ) {
 			return 1;
 		}
 
-		return get_blog_count();
+		return count( self::get_active_site_ids() );
+	}
+
+	/**
+	 * Retourne les IDs des sites actifs du réseau.
+	 *
+	 * Exclut les sites archivés, supprimés et spam.
+	 *
+	 * @return int[] Liste des IDs de sites actifs.
+	 */
+	private static function get_active_site_ids() {
+		return get_sites(
+			array(
+				'fields'   => 'ids',
+				'archived' => 0,
+				'deleted'  => 0,
+				'spam'     => 0,
+			)
+		);
 	}
 
 	/**
@@ -193,18 +213,18 @@ class WBoard_Connector_Multisite {
 			return is_plugin_active( $plugin ) ? 1 : 0;
 		}
 
-		// Si activé au niveau réseau, c'est actif sur tous les sites.
+		// Si activé au niveau réseau, c'est actif sur tous les sites actifs.
 		if ( ! function_exists( 'is_plugin_active_for_network' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 		if ( is_plugin_active_for_network( $plugin ) ) {
-			return get_blog_count();
+			return self::get_site_count();
 		}
 
 		global $wpdb;
 
-		// Récupère tous les IDs de sites.
-		$site_ids = get_sites( array( 'fields' => 'ids' ) );
+		// Récupère les IDs des sites actifs (exclut archivés/supprimés/spam).
+		$site_ids = self::get_active_site_ids();
 
 		if ( empty( $site_ids ) ) {
 			return 0;
