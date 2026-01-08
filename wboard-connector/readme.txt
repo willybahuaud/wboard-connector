@@ -1,10 +1,10 @@
 === WBoard Connector ===
 Contributors: willybahuaud
-Tags: monitoring, dashboard, backup, security, management
+Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 8.0
-Stable tag: 1.0.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -22,6 +22,7 @@ WBoard Connector est un plugin compagnon pour WBoard, un outil de gestion de par
 * Remonte les alertes de sécurité (SecuPress Pro)
 * Permet la connexion en un clic au back-office
 * Mise à jour automatique depuis le board
+* **Support WordPress Multisite** : détection réseau, niveau d'activation des plugins
 
 **Sécurité :**
 
@@ -55,6 +56,20 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Changelog ==
 
+= 1.3.0 =
+* **Support WordPress Multisite complet**
+* Détection du contexte multisite (réseau, nombre de sites)
+* Niveau d'activation des plugins : network, site, some_sites, none
+* Comptage optimisé des sites avec plugin actif (requête SQL UNION)
+* Exclusion automatique des sites archivés/supprimés/spam
+
+= 1.2.0 =
+* Fix détection schedule incrémental WPVivid Pro
+* Fix date dernier backup (prend en compte les itérations incrémentales)
+
+= 1.1.0 =
+* Monitoring WP-Cron (type cron, tâches en retard, dernier run)
+
 = 1.0.0 =
 * Version initiale
 * Collecte des informations système (versions WP/PHP)
@@ -65,6 +80,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+Ajout du support WordPress Multisite avec détection du niveau d'activation des plugins.
 
 = 1.0.0 =
 Version initiale du plugin.
