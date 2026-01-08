@@ -218,13 +218,14 @@ class WBoard_Connector_Collector {
 	 * Récupère le statut de WPVivid Backup.
 	 *
 	 * Supporte WPVivid Backup (gratuit) et WPVivid Backup Pro.
+	 * En multisite, détecte les plugins activés au niveau réseau.
 	 *
 	 * @return array Données de sauvegarde WPVivid.
 	 */
 	private function get_wpvivid_backup_status() {
-		// Vérifie si WPVivid est actif.
-		$is_free_active = is_plugin_active( 'wpvivid-backuprestore/wpvivid-backuprestore.php' );
-		$is_pro_active  = is_plugin_active( 'wpvivid-backup-pro/wpvivid-backup-pro.php' );
+		// Vérifie si WPVivid est actif (site ou network).
+		$is_free_active = WBoard_Connector_Multisite::is_plugin_active_anywhere( 'wpvivid-backuprestore/wpvivid-backuprestore.php' );
+		$is_pro_active  = WBoard_Connector_Multisite::is_plugin_active_anywhere( 'wpvivid-backup-pro/wpvivid-backup-pro.php' );
 
 		if ( ! $is_free_active && ! $is_pro_active ) {
 			return array(
@@ -672,6 +673,9 @@ class WBoard_Connector_Collector {
 	/**
 	 * Retourne la liste des utilisateurs administrateurs.
 	 *
+	 * En multisite, inclut également les super admins du réseau
+	 * avec les flags is_super_admin et can_network_admin.
+	 *
 	 * @return array Liste des administrateurs.
 	 */
 	public function get_admin_users() {
@@ -683,14 +687,43 @@ class WBoard_Connector_Collector {
 			)
 		);
 
-		$users = array();
+		$users    = array();
+		$user_ids = array();
+
+		// Ajoute les administrateurs du site.
 		foreach ( $admin_users as $user ) {
-			$users[] = array(
-				'id'           => $user->ID,
-				'username'     => $user->user_login,
-				'display_name' => $user->display_name,
-				'role'         => 'administrator',
+			$is_super_admin = WBoard_Connector_Multisite::is_user_super_admin( $user->ID );
+
+			$users[]    = array(
+				'id'                => $user->ID,
+				'username'          => $user->user_login,
+				'display_name'      => $user->display_name,
+				'role'              => 'administrator',
+				'is_super_admin'    => $is_super_admin,
+				'can_network_admin' => $is_super_admin,
 			);
+			$user_ids[] = $user->ID;
+		}
+
+		// En multisite, ajoute les super admins qui ne sont pas déjà admin du site.
+		if ( WBoard_Connector_Multisite::is_multisite() ) {
+			$super_admins = WBoard_Connector_Multisite::get_super_admins();
+
+			foreach ( $super_admins as $super_admin ) {
+				// Évite les doublons.
+				if ( in_array( $super_admin->ID, $user_ids, true ) ) {
+					continue;
+				}
+
+				$users[] = array(
+					'id'                => $super_admin->ID,
+					'username'          => $super_admin->user_login,
+					'display_name'      => $super_admin->display_name,
+					'role'              => 'super_admin',
+					'is_super_admin'    => true,
+					'can_network_admin' => true,
+				);
+			}
 		}
 
 		return $users;
@@ -699,16 +732,17 @@ class WBoard_Connector_Collector {
 	/**
 	 * Retourne la liste des plugins installés.
 	 *
-	 * @return array Liste des plugins avec slug, nom, version et statut actif.
+	 * En multisite, détecte aussi les plugins activés au niveau réseau.
+	 *
+	 * @return array Liste des plugins avec slug, nom, version, statut actif et niveau d'activation.
 	 */
 	public function get_installed_plugins() {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 
-		$plugins        = get_plugins();
-		$active_plugins = get_option( 'active_plugins', array() );
-		$installed      = array();
+		$plugins   = get_plugins();
+		$installed = array();
 
 		foreach ( $plugins as $file => $data ) {
 			$slug = dirname( $file );
@@ -716,11 +750,14 @@ class WBoard_Connector_Collector {
 				$slug = basename( $file, '.php' );
 			}
 
+			$activation_level = WBoard_Connector_Multisite::get_plugin_activation_level( $file );
+
 			$installed[] = array(
-				'slug'      => $slug,
-				'name'      => $data['Name'],
-				'version'   => $data['Version'],
-				'is_active' => in_array( $file, $active_plugins, true ),
+				'slug'             => $slug,
+				'name'             => $data['Name'],
+				'version'          => $data['Version'],
+				'is_active'        => 'none' !== $activation_level,
+				'activation_level' => $activation_level,
 			);
 		}
 
