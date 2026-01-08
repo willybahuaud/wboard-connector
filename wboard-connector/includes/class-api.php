@@ -127,6 +127,7 @@ class WBoard_Connector_Api {
 				'themes'  => $collector->get_installed_themes(),
 			),
 			'cron'           => $collector->get_cron_status(),
+			'multisite'      => WBoard_Connector_Multisite::get_multisite_info(),
 		);
 
 		return new WP_REST_Response( $data, 200 );

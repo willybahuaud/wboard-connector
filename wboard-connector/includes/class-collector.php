@@ -218,13 +218,14 @@ class WBoard_Connector_Collector {
 	 * Récupère le statut de WPVivid Backup.
 	 *
 	 * Supporte WPVivid Backup (gratuit) et WPVivid Backup Pro.
+	 * En multisite, détecte les plugins activés au niveau réseau.
 	 *
 	 * @return array Données de sauvegarde WPVivid.
 	 */
 	private function get_wpvivid_backup_status() {
-		// Vérifie si WPVivid est actif.
-		$is_free_active = is_plugin_active( 'wpvivid-backuprestore/wpvivid-backuprestore.php' );
-		$is_pro_active  = is_plugin_active( 'wpvivid-backup-pro/wpvivid-backup-pro.php' );
+		// Vérifie si WPVivid est actif (site ou network).
+		$is_free_active = WBoard_Connector_Multisite::is_plugin_active_anywhere( 'wpvivid-backuprestore/wpvivid-backuprestore.php' );
+		$is_pro_active  = WBoard_Connector_Multisite::is_plugin_active_anywhere( 'wpvivid-backup-pro/wpvivid-backup-pro.php' );
 
 		if ( ! $is_free_active && ! $is_pro_active ) {
 			return array(
@@ -670,11 +671,20 @@ class WBoard_Connector_Collector {
 	}
 
 	/**
-	 * Retourne la liste des utilisateurs administrateurs.
+	 * Retourne la liste des utilisateurs pouvant administrer.
 	 *
-	 * @return array Liste des administrateurs.
+	 * En multisite : retourne uniquement les super admins du réseau.
+	 * En mono-site : retourne les administrateurs du site.
+	 *
+	 * @return array Liste des administrateurs/super admins.
 	 */
 	public function get_admin_users() {
+		// En multisite, on ne retourne que les super admins.
+		if ( WBoard_Connector_Multisite::is_multisite() ) {
+			return $this->get_super_admin_users();
+		}
+
+		// En mono-site, on retourne les administrateurs.
 		$admin_users = get_users(
 			array(
 				'role'    => 'administrator',
@@ -686,10 +696,35 @@ class WBoard_Connector_Collector {
 		$users = array();
 		foreach ( $admin_users as $user ) {
 			$users[] = array(
-				'id'           => $user->ID,
-				'username'     => $user->user_login,
-				'display_name' => $user->display_name,
-				'role'         => 'administrator',
+				'id'                => $user->ID,
+				'username'          => $user->user_login,
+				'display_name'      => $user->display_name,
+				'role'              => 'administrator',
+				'is_super_admin'    => false,
+				'can_network_admin' => false,
+			);
+		}
+
+		return $users;
+	}
+
+	/**
+	 * Retourne la liste des super admins du réseau.
+	 *
+	 * @return array Liste des super admins.
+	 */
+	private function get_super_admin_users() {
+		$super_admins = WBoard_Connector_Multisite::get_super_admins();
+		$users        = array();
+
+		foreach ( $super_admins as $user ) {
+			$users[] = array(
+				'id'                => $user->ID,
+				'username'          => $user->user_login,
+				'display_name'      => $user->display_name,
+				'role'              => 'super_admin',
+				'is_super_admin'    => true,
+				'can_network_admin' => true,
 			);
 		}
 
@@ -699,16 +734,20 @@ class WBoard_Connector_Collector {
 	/**
 	 * Retourne la liste des plugins installés.
 	 *
-	 * @return array Liste des plugins avec slug, nom, version et statut actif.
+	 * En multisite, détecte les plugins activés au niveau réseau ou sur certains sites.
+	 * Utilise une requête SQL UNION optimisée pour compter les sites.
+	 *
+	 * @return array Liste des plugins avec slug, nom, version, statut et niveau d'activation.
 	 */
 	public function get_installed_plugins() {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 
-		$plugins        = get_plugins();
-		$active_plugins = get_option( 'active_plugins', array() );
-		$installed      = array();
+		$plugins     = get_plugins();
+		$installed   = array();
+		$is_multisite = WBoard_Connector_Multisite::is_multisite();
+		$total_sites  = $is_multisite ? WBoard_Connector_Multisite::get_site_count() : 1;
 
 		foreach ( $plugins as $file => $data ) {
 			$slug = dirname( $file );
@@ -716,15 +755,62 @@ class WBoard_Connector_Collector {
 				$slug = basename( $file, '.php' );
 			}
 
+			// Détermine le niveau d'activation et le nombre de sites.
+			if ( $is_multisite ) {
+				$plugin_info = $this->get_plugin_multisite_info( $file, $total_sites );
+			} else {
+				$is_active   = is_plugin_active( $file );
+				$plugin_info = array(
+					'activation_level'  => $is_active ? 'site' : 'none',
+					'active_site_count' => $is_active ? 1 : 0,
+				);
+			}
+
 			$installed[] = array(
-				'slug'      => $slug,
-				'name'      => $data['Name'],
-				'version'   => $data['Version'],
-				'is_active' => in_array( $file, $active_plugins, true ),
+				'slug'              => $slug,
+				'name'              => $data['Name'],
+				'version'           => $data['Version'],
+				'is_active'         => $plugin_info['active_site_count'] > 0,
+				'activation_level'  => $plugin_info['activation_level'],
+				'active_site_count' => $plugin_info['active_site_count'],
+				'total_sites'       => $total_sites,
 			);
 		}
 
 		return $installed;
+	}
+
+	/**
+	 * Récupère les infos d'activation multisite pour un plugin.
+	 *
+	 * @param string $plugin      Chemin du plugin.
+	 * @param int    $total_sites Nombre total de sites dans le réseau.
+	 *
+	 * @return array Avec 'activation_level' et 'active_site_count'.
+	 */
+	private function get_plugin_multisite_info( $plugin, $total_sites ) {
+		// Vérifie d'abord si activé au niveau réseau.
+		if ( is_plugin_active_for_network( $plugin ) ) {
+			return array(
+				'activation_level'  => 'network',
+				'active_site_count' => $total_sites,
+			);
+		}
+
+		// Compte les sites où le plugin est actif.
+		$active_count = WBoard_Connector_Multisite::count_sites_with_plugin_active( $plugin );
+
+		if ( 0 === $active_count ) {
+			return array(
+				'activation_level'  => 'none',
+				'active_site_count' => 0,
+			);
+		}
+
+		return array(
+			'activation_level'  => 'some_sites',
+			'active_site_count' => $active_count,
+		);
 	}
 
 	/**

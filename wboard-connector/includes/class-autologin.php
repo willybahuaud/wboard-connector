@@ -41,6 +41,9 @@ class WBoard_Connector_Autologin {
 	/**
 	 * Génère un token d'auto-login pour un utilisateur.
 	 *
+	 * En multisite, seuls les super admins peuvent utiliser l'auto-login.
+	 * En mono-site, les administrateurs peuvent l'utiliser.
+	 *
 	 * @param int $user_id ID de l'utilisateur WordPress.
 	 *
 	 * @return array|WP_Error Données de connexion ou erreur.
@@ -56,11 +59,15 @@ class WBoard_Connector_Autologin {
 			);
 		}
 
-		// Vérifie que l'utilisateur est administrateur.
-		if ( ! user_can( $user, 'administrator' ) ) {
+		// Vérifie les permissions selon le contexte.
+		if ( ! $this->user_can_autologin( $user_id ) ) {
+			$message = WBoard_Connector_Multisite::is_multisite()
+				? __( 'Seuls les super admins peuvent utiliser l\'auto-login.', 'wboard-connector' )
+				: __( 'Seuls les administrateurs peuvent utiliser l\'auto-login.', 'wboard-connector' );
+
 			return new WP_Error(
 				'wboard_not_admin',
-				__( 'Seuls les administrateurs peuvent utiliser l\'auto-login.', 'wboard-connector' ),
+				$message,
 				array( 'status' => 403 )
 			);
 		}
@@ -78,11 +85,35 @@ class WBoard_Connector_Autologin {
 		// Calcule l'expiration.
 		$expires_at = gmdate( 'c', time() + self::TOKEN_EXPIRATION );
 
+		// Détermine l'URL de redirection.
+		$redirect_url = WBoard_Connector_Multisite::is_multisite()
+			? network_admin_url()
+			: admin_url();
+
 		return array(
-			'success'    => true,
-			'login_url'  => $login_url,
-			'expires_at' => $expires_at,
+			'success'      => true,
+			'login_url'    => $login_url,
+			'expires_at'   => $expires_at,
+			'redirect_url' => $redirect_url,
 		);
+	}
+
+	/**
+	 * Vérifie si un utilisateur peut utiliser l'auto-login.
+	 *
+	 * En multisite : doit être super admin.
+	 * En mono-site : doit être administrateur.
+	 *
+	 * @param int $user_id ID de l'utilisateur.
+	 *
+	 * @return bool True si autorisé.
+	 */
+	private function user_can_autologin( $user_id ) {
+		if ( WBoard_Connector_Multisite::is_multisite() ) {
+			return WBoard_Connector_Multisite::is_user_super_admin( $user_id );
+		}
+
+		return user_can( $user_id, 'administrator' );
 	}
 
 	/**
@@ -145,6 +176,8 @@ class WBoard_Connector_Autologin {
 	/**
 	 * Intercepte et traite les requêtes d'auto-login.
 	 *
+	 * En multisite, redirige vers le Network Admin.
+	 *
 	 * @return void
 	 */
 	public function handle_autologin_request() {
@@ -174,8 +207,12 @@ class WBoard_Connector_Autologin {
 			);
 		}
 
-		// Redirige vers le tableau de bord.
-		wp_safe_redirect( admin_url() );
+		// Redirige vers le tableau de bord approprié.
+		$redirect_url = WBoard_Connector_Multisite::is_multisite()
+			? network_admin_url()
+			: admin_url();
+
+		wp_safe_redirect( $redirect_url );
 		exit;
 	}
 }
