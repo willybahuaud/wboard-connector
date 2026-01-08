@@ -124,7 +124,7 @@ wboard-connector/
 
 ---
 
-## Projet parent
+## Écosystème WBoard
 
 Ce plugin fait partie de l'écosystème **WBoard** :
 
@@ -132,6 +132,7 @@ Ce plugin fait partie de l'écosystème **WBoard** :
 |-------|-------------|
 | [wboard-site](https://github.com/willybahuaud/wboard-site) | Dashboard Laravel + React |
 | **wboard-connector** | Ce plugin WordPress |
+| [wboard-kuma](https://github.com/willybahuaud/wboard-kuma) | Uptime Kuma + proxy API (Docker) |
 
 ---
 
