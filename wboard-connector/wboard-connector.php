@@ -12,6 +12,7 @@
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: wboard-connector
  * Domain Path: /languages
+ * Network: true
  *
  * @package WBoard_Connector
  */
