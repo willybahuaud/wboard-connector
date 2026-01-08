@@ -3,7 +3,7 @@
  * Plugin Name: WBoard Connector
  * Plugin URI: https://github.com/wboard/connector
  * Description: Connecteur pour WBoard - Permet la supervision centralisée du site WordPress.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Requires at least: 6.0
  * Requires PHP: 7.3
  * Author: Willy bahuaud
