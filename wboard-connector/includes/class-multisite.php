@@ -175,6 +175,68 @@ class WBoard_Connector_Multisite {
 	}
 
 	/**
+	 * Compte le nombre de sites où un plugin est activé.
+	 *
+	 * Utilise une requête SQL UNION pour interroger toutes les tables
+	 * wp_X_options en une seule requête, évitant les switch_to_blog().
+	 *
+	 * @param string $plugin Chemin du plugin (ex: 'woocommerce/woocommerce.php').
+	 *
+	 * @return int Nombre de sites où le plugin est actif.
+	 */
+	public static function count_sites_with_plugin_active( $plugin ) {
+		// En mono-site, vérifie simplement si le plugin est actif.
+		if ( ! self::is_multisite() ) {
+			if ( ! function_exists( 'is_plugin_active' ) ) {
+				require_once ABSPATH . 'wp-admin/includes/plugin.php';
+			}
+			return is_plugin_active( $plugin ) ? 1 : 0;
+		}
+
+		// Si activé au niveau réseau, c'est actif sur tous les sites.
+		if ( ! function_exists( 'is_plugin_active_for_network' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		if ( is_plugin_active_for_network( $plugin ) ) {
+			return get_blog_count();
+		}
+
+		global $wpdb;
+
+		// Récupère tous les IDs de sites.
+		$site_ids = get_sites( array( 'fields' => 'ids' ) );
+
+		if ( empty( $site_ids ) ) {
+			return 0;
+		}
+
+		// Construit la requête UNION.
+		// Le plugin est stocké dans active_plugins sous forme sérialisée.
+		// On cherche : "plugin-folder/plugin-file.php" dans la valeur.
+		$union_parts = array();
+		$search_pattern = '%"' . $wpdb->esc_like( $plugin ) . '"%';
+
+		foreach ( $site_ids as $blog_id ) {
+			$table_prefix = $wpdb->get_blog_prefix( $blog_id );
+			$table_name   = $table_prefix . 'options';
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is safe.
+			$union_parts[] = $wpdb->prepare(
+				"SELECT %d as blog_id FROM {$table_name} WHERE option_name = 'active_plugins' AND option_value LIKE %s",
+				$blog_id,
+				$search_pattern
+			);
+		}
+
+		$union_query = implode( ' UNION ALL ', $union_parts );
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is built with prepare().
+		$count = $wpdb->query( $union_query );
+
+		return (int) $count;
+	}
+
+	/**
 	 * Retourne l'URL d'administration appropriée pour un utilisateur.
 	 *
 	 * - Super admin → network admin

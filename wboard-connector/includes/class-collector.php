@@ -734,7 +734,8 @@ class WBoard_Connector_Collector {
 	/**
 	 * Retourne la liste des plugins installés.
 	 *
-	 * En multisite, détecte les plugins activés au niveau réseau.
+	 * En multisite, détecte les plugins activés au niveau réseau ou sur certains sites.
+	 * Utilise une requête SQL UNION optimisée pour compter les sites.
 	 *
 	 * @return array Liste des plugins avec slug, nom, version, statut et niveau d'activation.
 	 */
@@ -743,8 +744,10 @@ class WBoard_Connector_Collector {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 
-		$plugins   = get_plugins();
-		$installed = array();
+		$plugins     = get_plugins();
+		$installed   = array();
+		$is_multisite = WBoard_Connector_Multisite::is_multisite();
+		$total_sites  = $is_multisite ? WBoard_Connector_Multisite::get_site_count() : 1;
 
 		foreach ( $plugins as $file => $data ) {
 			$slug = dirname( $file );
@@ -752,18 +755,62 @@ class WBoard_Connector_Collector {
 				$slug = basename( $file, '.php' );
 			}
 
-			$activation_level = WBoard_Connector_Multisite::get_plugin_activation_level( $file );
+			// Détermine le niveau d'activation et le nombre de sites.
+			if ( $is_multisite ) {
+				$plugin_info = $this->get_plugin_multisite_info( $file, $total_sites );
+			} else {
+				$is_active   = is_plugin_active( $file );
+				$plugin_info = array(
+					'activation_level'  => $is_active ? 'site' : 'none',
+					'active_site_count' => $is_active ? 1 : 0,
+				);
+			}
 
 			$installed[] = array(
-				'slug'             => $slug,
-				'name'             => $data['Name'],
-				'version'          => $data['Version'],
-				'is_active'        => 'none' !== $activation_level,
-				'activation_level' => $activation_level,
+				'slug'              => $slug,
+				'name'              => $data['Name'],
+				'version'           => $data['Version'],
+				'is_active'         => $plugin_info['active_site_count'] > 0,
+				'activation_level'  => $plugin_info['activation_level'],
+				'active_site_count' => $plugin_info['active_site_count'],
+				'total_sites'       => $total_sites,
 			);
 		}
 
 		return $installed;
+	}
+
+	/**
+	 * Récupère les infos d'activation multisite pour un plugin.
+	 *
+	 * @param string $plugin      Chemin du plugin.
+	 * @param int    $total_sites Nombre total de sites dans le réseau.
+	 *
+	 * @return array Avec 'activation_level' et 'active_site_count'.
+	 */
+	private function get_plugin_multisite_info( $plugin, $total_sites ) {
+		// Vérifie d'abord si activé au niveau réseau.
+		if ( is_plugin_active_for_network( $plugin ) ) {
+			return array(
+				'activation_level'  => 'network',
+				'active_site_count' => $total_sites,
+			);
+		}
+
+		// Compte les sites où le plugin est actif.
+		$active_count = WBoard_Connector_Multisite::count_sites_with_plugin_active( $plugin );
+
+		if ( 0 === $active_count ) {
+			return array(
+				'activation_level'  => 'none',
+				'active_site_count' => 0,
+			);
+		}
+
+		return array(
+			'activation_level'  => 'some_sites',
+			'active_site_count' => $active_count,
+		);
 	}
 
 	/**
