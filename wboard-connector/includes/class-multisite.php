@@ -233,19 +233,31 @@ class WBoard_Connector_Multisite {
 		// Construit la requête UNION.
 		// Le plugin est stocké dans active_plugins sous forme sérialisée.
 		// On cherche : "plugin-folder/plugin-file.php" dans la valeur.
-		$union_parts = array();
+		$union_parts    = array();
 		$search_pattern = '%"' . $wpdb->esc_like( $plugin ) . '"%';
 
 		foreach ( $site_ids as $blog_id ) {
 			$table_prefix = $wpdb->get_blog_prefix( $blog_id );
 			$table_name   = $table_prefix . 'options';
 
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is safe.
+			// Vérifie que la table existe (protection contre tables supprimées manuellement).
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name from WP function.
+			$table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+			if ( $table_exists !== $table_name ) {
+				continue;
+			}
+
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name validated above.
 			$union_parts[] = $wpdb->prepare(
 				"SELECT %d as blog_id FROM {$table_name} WHERE option_name = 'active_plugins' AND option_value LIKE %s",
 				$blog_id,
 				$search_pattern
 			);
+		}
+
+		// Si aucune table valide, retourne 0.
+		if ( empty( $union_parts ) ) {
+			return 0;
 		}
 
 		$union_query = implode( ' UNION ALL ', $union_parts );
