@@ -78,19 +78,21 @@ add_action( 'plugins_loaded', 'wboard_connector_init' );
  * Actions à l'activation du plugin.
  *
  * Génère une clé secrète si elle n'existe pas.
+ * En multisite, la clé est stockée au niveau réseau (wp_sitemeta).
  *
  * @return void
  */
 function wboard_connector_activate() {
 	// Génère la clé secrète si elle n'existe pas.
-	if ( ! get_option( 'wboard_connector_secret_key' ) ) {
+	// get_site_option() fonctionne comme get_option() en mono-site.
+	if ( ! get_site_option( 'wboard_connector_secret_key' ) ) {
 		$secret_key = wp_generate_password( 64, true, true );
-		update_option( 'wboard_connector_secret_key', $secret_key );
+		update_site_option( 'wboard_connector_secret_key', $secret_key );
 	}
 
-	// Stocke la date d'installation.
-	if ( ! get_option( 'wboard_connector_installed_at' ) ) {
-		update_option( 'wboard_connector_installed_at', current_time( 'mysql' ) );
+	// Stocke la date d'installation au niveau réseau.
+	if ( ! get_site_option( 'wboard_connector_installed_at' ) ) {
+		update_site_option( 'wboard_connector_installed_at', current_time( 'mysql' ) );
 	}
 }
 register_activation_hook( __FILE__, 'wboard_connector_activate' );

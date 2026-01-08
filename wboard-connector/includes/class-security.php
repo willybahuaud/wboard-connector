@@ -18,6 +18,20 @@ defined( 'ABSPATH' ) || exit;
 class WBoard_Connector_Security {
 
 	/**
+	 * Nom de l'option pour la clé secrète.
+	 *
+	 * @var string
+	 */
+	const OPTION_SECRET_KEY = 'wboard_connector_secret_key';
+
+	/**
+	 * Nom de l'option pour la date d'installation.
+	 *
+	 * @var string
+	 */
+	const OPTION_INSTALLED_AT = 'wboard_connector_installed_at';
+
+	/**
 	 * Durée de validité du timestamp en secondes.
 	 *
 	 * Les requêtes avec un timestamp plus ancien sont rejetées
@@ -235,10 +249,38 @@ class WBoard_Connector_Security {
 	/**
 	 * Récupère la clé secrète du plugin.
 	 *
+	 * En multisite, la clé est stockée au niveau réseau (wp_sitemeta).
+	 * En mono-site, get_site_option() se comporte comme get_option().
+	 *
 	 * @return string|false La clé secrète ou false si non définie.
 	 */
 	public function get_secret_key() {
-		return get_option( 'wboard_connector_secret_key', false );
+		// Tente d'abord de récupérer au niveau réseau.
+		$key = get_site_option( self::OPTION_SECRET_KEY, false );
+
+		// Migration : si pas de clé réseau mais une clé site existe, la migrer.
+		if ( false === $key && WBoard_Connector_Multisite::is_multisite() ) {
+			$site_key = get_option( self::OPTION_SECRET_KEY, false );
+			if ( false !== $site_key ) {
+				$this->migrate_key_to_network( $site_key );
+				$key = $site_key;
+			}
+		}
+
+		return $key;
+	}
+
+	/**
+	 * Enregistre la clé secrète.
+	 *
+	 * En multisite, la clé est stockée au niveau réseau.
+	 *
+	 * @param string $key La clé secrète à enregistrer.
+	 *
+	 * @return bool True si succès.
+	 */
+	public function save_secret_key( $key ) {
+		return update_site_option( self::OPTION_SECRET_KEY, $key );
 	}
 
 	/**
@@ -248,9 +290,27 @@ class WBoard_Connector_Security {
 	 */
 	public function regenerate_secret_key() {
 		$new_key = wp_generate_password( 64, true, true );
-		update_option( 'wboard_connector_secret_key', $new_key );
+		$this->save_secret_key( $new_key );
 
 		return $new_key;
+	}
+
+	/**
+	 * Migre la clé secrète du niveau site vers le niveau réseau.
+	 *
+	 * Utilisé lors de la première utilisation en multisite si une clé
+	 * existait déjà au niveau d'un site individuel.
+	 *
+	 * @param string $key La clé à migrer.
+	 *
+	 * @return void
+	 */
+	private function migrate_key_to_network( $key ) {
+		// Sauvegarde au niveau réseau.
+		update_site_option( self::OPTION_SECRET_KEY, $key );
+
+		// Supprime l'ancienne clé au niveau site.
+		delete_option( self::OPTION_SECRET_KEY );
 	}
 
 	/**
