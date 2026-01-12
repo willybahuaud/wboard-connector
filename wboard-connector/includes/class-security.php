@@ -286,10 +286,13 @@ class WBoard_Connector_Security {
 	/**
 	 * Génère une nouvelle clé secrète.
 	 *
+	 * Utilise uniquement des caractères alphanumériques pour éviter
+	 * les problèmes d'encodage (backticks, etc.) lors de la transmission.
+	 *
 	 * @return string La nouvelle clé secrète.
 	 */
 	public function regenerate_secret_key() {
-		$new_key = wp_generate_password( 64, true, true );
+		$new_key = wp_generate_password( 64, false, false );
 		$this->save_secret_key( $new_key );
 
 		return $new_key;
