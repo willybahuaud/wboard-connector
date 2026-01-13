@@ -654,6 +654,109 @@ class WBoard_Connector_Collector {
 	}
 
 	/**
+	 * Récupère les credentials de stockage distant WPVivid pour le script de restauration.
+	 *
+	 * Retourne les credentials B2/S3 si configurés, permettant au board de générer
+	 * un script de restauration standalone.
+	 *
+	 * @return array|null Credentials ou null si non configurés.
+	 */
+	public function get_backup_remote_credentials() {
+		$upload_setting = get_option( 'wpvivid_upload_setting' );
+		$user_history   = get_option( 'wpvivid_user_history' );
+
+		if ( empty( $upload_setting ) || ! is_array( $upload_setting ) ) {
+			return null;
+		}
+
+		// Récupère l'ID du remote sélectionné.
+		$selected_remote_id = $this->get_selected_remote_id( $upload_setting, $user_history );
+
+		if ( empty( $selected_remote_id ) || empty( $upload_setting[ $selected_remote_id ] ) ) {
+			return null;
+		}
+
+		$remote_config = $upload_setting[ $selected_remote_id ];
+		$type          = $remote_config['type'] ?? '';
+
+		// Seul B2 est supporté pour le script de restauration pour l'instant.
+		if ( 'b2' !== $type && 'backblaze' !== $type ) {
+			return null;
+		}
+
+		return $this->extract_b2_credentials( $remote_config );
+	}
+
+	/**
+	 * Récupère l'ID du remote sélectionné dans les settings WPVivid.
+	 *
+	 * @param array      $upload_setting Settings d'upload WPVivid.
+	 * @param array|null $user_history   Historique utilisateur WPVivid.
+	 *
+	 * @return string|null ID du remote ou null.
+	 */
+	private function get_selected_remote_id( $upload_setting, $user_history ) {
+		$selected_remote_id = null;
+
+		if ( ! empty( $user_history['remote_selected'] ) && is_array( $user_history['remote_selected'] ) ) {
+			$selected_remote_id = reset( $user_history['remote_selected'] );
+		}
+
+		if ( empty( $selected_remote_id ) && ! empty( $upload_setting['remote_selected'] ) ) {
+			$selected_remote_id = is_array( $upload_setting['remote_selected'] )
+				? reset( $upload_setting['remote_selected'] )
+				: $upload_setting['remote_selected'];
+		}
+
+		// Fallback : premier remote B2 disponible.
+		if ( empty( $selected_remote_id ) ) {
+			foreach ( $upload_setting as $key => $value ) {
+				if ( is_array( $value ) && in_array( ( $value['type'] ?? '' ), array( 'b2', 'backblaze' ), true ) ) {
+					$selected_remote_id = $key;
+					break;
+				}
+			}
+		}
+
+		return $selected_remote_id;
+	}
+
+	/**
+	 * Extrait les credentials B2 depuis la config remote WPVivid.
+	 *
+	 * @param array $remote_config Configuration du remote B2.
+	 *
+	 * @return array Credentials B2 formatés.
+	 */
+	private function extract_b2_credentials( $remote_config ) {
+		// WPVivid Pro stocke les credentials sous différentes clés selon la version.
+		$key_id = $remote_config['key_id']
+			?? $remote_config['appKeyId']
+			?? $remote_config['account_id']
+			?? '';
+
+		$app_key = $remote_config['application_key']
+			?? $remote_config['appKey']
+			?? $remote_config['app_key']
+			?? '';
+
+		$bucket = $remote_config['bucket'] ?? '';
+		$path   = trim( $remote_config['path'] ?? '', '/' );
+
+		if ( empty( $key_id ) || empty( $app_key ) || empty( $bucket ) ) {
+			return null;
+		}
+
+		return array(
+			'type'    => 'b2',
+			'key_id'  => $key_id,
+			'app_key' => $app_key,
+			'bucket'  => $bucket,
+			'path'    => $path,
+		);
+	}
+
+	/**
 	 * Retourne le statut de sécurité.
 	 *
 	 * Supporte SecuPress Pro.

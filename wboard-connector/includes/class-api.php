@@ -87,6 +87,17 @@ class WBoard_Connector_Api {
 				'permission_callback' => array( $this, 'check_permission' ),
 			)
 		);
+
+		// GET /wboard/v1/backup-credentials - Récupère les credentials de backup distant.
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/backup-credentials',
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'get_backup_credentials' ),
+				'permission_callback' => array( $this, 'check_permission' ),
+			)
+		);
 	}
 
 	/**
@@ -180,5 +191,30 @@ class WBoard_Connector_Api {
 			),
 			200
 		);
+	}
+
+	/**
+	 * Récupère les credentials de backup distant.
+	 *
+	 * Utilisé par le board pour générer un script de restauration standalone.
+	 * Seul le stockage B2 (Backblaze) est supporté pour l'instant.
+	 *
+	 * @param WP_REST_Request $request La requête REST.
+	 *
+	 * @return WP_REST_Response|WP_Error Les credentials ou une erreur.
+	 */
+	public function get_backup_credentials( WP_REST_Request $request ) {
+		$collector   = new WBoard_Connector_Collector();
+		$credentials = $collector->get_backup_remote_credentials();
+
+		if ( null === $credentials ) {
+			return new WP_Error(
+				'wboard_no_remote_credentials',
+				__( 'Aucun stockage distant B2 configuré.', 'wboard-connector' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		return new WP_REST_Response( $credentials, 200 );
 	}
 }
