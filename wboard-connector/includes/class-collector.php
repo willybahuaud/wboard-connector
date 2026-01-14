@@ -730,18 +730,24 @@ class WBoard_Connector_Collector {
 	 */
 	private function extract_b2_credentials( $remote_config ) {
 		// WPVivid Pro stocke les credentials sous différentes clés selon la version.
-		$key_id = $remote_config['key_id']
+		// Formats connus : appkeyid, appKeyId, key_id, account_id.
+		$key_id = $remote_config['appkeyid']
 			?? $remote_config['appKeyId']
+			?? $remote_config['key_id']
 			?? $remote_config['account_id']
 			?? '';
 
-		$app_key = $remote_config['application_key']
+		// Formats connus : appkey, appKey, application_key, app_key.
+		$app_key = $remote_config['appkey']
 			?? $remote_config['appKey']
+			?? $remote_config['application_key']
 			?? $remote_config['app_key']
 			?? '';
 
-		$bucket = $remote_config['bucket'] ?? '';
-		$path   = trim( $remote_config['path'] ?? '', '/' );
+		$bucket    = $remote_config['bucket'] ?? '';
+		$root_path = trim( $remote_config['root_path'] ?? '', '/' );
+		$path      = trim( $remote_config['path'] ?? '', '/' );
+		$full_path = trim( $root_path . '/' . $path, '/' );
 
 		if ( empty( $key_id ) || empty( $app_key ) || empty( $bucket ) ) {
 			return null;
@@ -752,7 +758,7 @@ class WBoard_Connector_Collector {
 			'key_id'  => $key_id,
 			'app_key' => $app_key,
 			'bucket'  => $bucket,
-			'path'    => $path,
+			'path'    => $full_path,
 		);
 	}
 
