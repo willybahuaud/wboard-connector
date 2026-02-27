@@ -945,6 +945,17 @@ class WBoard_Connector_Collector {
 	}
 
 	/**
+	 * Retourne le statut du mode debug WordPress.
+	 *
+	 * @return array Données debug : wp_debug.
+	 */
+	public function get_debug_status() {
+		return array(
+			'wp_debug' => defined( 'WP_DEBUG' ) && WP_DEBUG,
+		);
+	}
+
+	/**
 	 * Retourne le statut du système WP-Cron.
 	 *
 	 * Détecte si DISABLE_WP_CRON est activé et compte les tâches en retard.
