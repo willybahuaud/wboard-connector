@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 1.6.1
+Stable tag: 1.6.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -58,6 +58,11 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Changelog ==
 
+= 1.6.2 =
+* Fix sécurité : rate limiting basé sur REMOTE_ADDR (non spoofable)
+* Fix sécurité : validation stricte du slug lors des MAJ à distance (regex alphanum)
+* Refactor : remplacement des fonctions anonymes par des méthodes nommées
+
 = 1.6.1 =
 * Fix sécurité : suppression endpoint /regenerate-key (clé exposée en réponse)
 * Fix sécurité : endpoint /backup-credentials ne retourne plus les secrets B2
@@ -103,6 +108,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 1.6.2 =
+Renforcement rate limiting et validation des slugs de MAJ.
 
 = 1.6.1 =
 Correctifs de sécurité suite à audit.
