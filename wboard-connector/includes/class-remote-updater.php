@@ -25,13 +25,6 @@ class WBoard_Connector_Remote_Updater {
 	const TEMP_BACKUP_DIR = 'wboard-upgrade-temp-backup';
 
 	/**
-	 * Slug du plugin connector (protege contre l'auto-update).
-	 *
-	 * @var string
-	 */
-	const SELF_SLUG = 'wboard-connector';
-
-	/**
 	 * Met a jour un plugin depuis son slug.
 	 *
 	 * @param string $slug Slug du plugin (ex: "woocommerce").
@@ -39,17 +32,6 @@ class WBoard_Connector_Remote_Updater {
 	 * @return array Resultat de la MAJ avec status, code, versions, message.
 	 */
 	public function update_plugin( $slug ) {
-		// Protection : refuser la MAJ du connector lui-meme.
-		if ( self::SELF_SLUG === $slug ) {
-			return array(
-				'status'      => 'error',
-				'code'        => 'self_update_blocked',
-				'old_version' => WBOARD_CONNECTOR_VERSION,
-				'new_version' => null,
-				'message'     => 'Le connector se met a jour via GitHub Releases, pas via le board.',
-			);
-		}
-
 		$this->load_upgrader_dependencies();
 
 		// Resoudre slug → plugin file.
