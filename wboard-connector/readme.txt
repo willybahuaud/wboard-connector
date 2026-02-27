@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 1.6.0
+Stable tag: 1.6.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -58,6 +58,13 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Changelog ==
 
+= 1.6.1 =
+* Fix sécurité : suppression endpoint /regenerate-key (clé exposée en réponse)
+* Fix sécurité : endpoint /backup-credentials ne retourne plus les secrets B2
+* Fix : alignement génération de clé sur alphanumériques uniquement
+* Fix : compatibilité PHP 7.3 (remplacement str_ends_with)
+* Requires PHP aligné sur 7.3
+
 = 1.6.0 =
 * Détection du statut WP_DEBUG (remontée vers le board)
 * Mise à jour de plugins et thèmes à distance depuis le board
@@ -96,6 +103,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 1.6.1 =
+Correctifs de sécurité suite à audit.
 
 = 1.6.0 =
 Détection WP_DEBUG + mise à jour de composants à distance.
