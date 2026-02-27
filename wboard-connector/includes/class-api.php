@@ -98,6 +98,17 @@ class WBoard_Connector_Api {
 				'permission_callback' => array( $this, 'check_permission' ),
 			)
 		);
+
+		// POST /wboard/v1/update-component - Met à jour un plugin ou thème.
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/update-component',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'update_component' ),
+				'permission_callback' => array( $this, 'check_permission' ),
+			)
+		);
 	}
 
 	/**
@@ -216,5 +227,56 @@ class WBoard_Connector_Api {
 		}
 
 		return new WP_REST_Response( $credentials, 200 );
+	}
+
+	/**
+	 * Met à jour un plugin ou thème à distance.
+	 *
+	 * Reçoit le type (plugin/theme) et le slug du composant,
+	 * puis délègue à WBoard_Connector_Remote_Updater.
+	 *
+	 * @param WP_REST_Request $request La requête REST avec type et slug.
+	 *
+	 * @return WP_REST_Response Résultat de la mise à jour.
+	 */
+	public function update_component( WP_REST_Request $request ) {
+		$body = json_decode( $request->get_body(), true );
+		$type = isset( $body['type'] ) ? sanitize_text_field( $body['type'] ) : '';
+		$slug = isset( $body['slug'] ) ? sanitize_text_field( $body['slug'] ) : '';
+
+		// Validation des paramètres.
+		if ( empty( $type ) || empty( $slug ) ) {
+			return new WP_REST_Response(
+				array(
+					'status'  => 'error',
+					'code'    => 'missing_params',
+					'message' => 'Les paramètres "type" et "slug" sont requis.',
+				),
+				400
+			);
+		}
+
+		if ( ! in_array( $type, array( 'plugin', 'theme' ), true ) ) {
+			return new WP_REST_Response(
+				array(
+					'status'  => 'error',
+					'code'    => 'invalid_type',
+					'message' => 'Le type doit être "plugin" ou "theme".',
+				),
+				400
+			);
+		}
+
+		$updater = new WBoard_Connector_Remote_Updater();
+
+		if ( 'plugin' === $type ) {
+			$result = $updater->update_plugin( $slug );
+		} else {
+			$result = $updater->update_theme( $slug );
+		}
+
+		$http_status = 'success' === $result['status'] ? 200 : 500;
+
+		return new WP_REST_Response( $result, $http_status );
 	}
 }
