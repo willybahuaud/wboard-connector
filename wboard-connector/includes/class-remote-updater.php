@@ -257,13 +257,19 @@ class WBoard_Connector_Remote_Updater {
 	 * En contexte REST API, les includes admin ne sont pas charges.
 	 * Plugin_Upgrader->upgrade() desactive puis reactive le plugin,
 	 * et la reactivation peut echouer si des fonctions admin manquent.
-	 * On charge donc l'ensemble via admin.php pour reproduire le contexte
-	 * du back-office WordPress.
+	 *
+	 * - admin.php : environnement admin complet (fonctions, hooks, etc.)
+	 * - class-wp-upgrader.php : classes Upgrader (pas incluses par admin.php)
+	 * - WP_Filesystem() : requis par copy_dir() et les Upgraders
 	 *
 	 * @return void
 	 */
 	private function load_upgrader_dependencies() {
 		require_once ABSPATH . 'wp-admin/includes/admin.php';
+		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+
+		// Initialiser le filesystem global (requis par copy_dir et les Upgraders).
+		WP_Filesystem();
 	}
 
 	/**
