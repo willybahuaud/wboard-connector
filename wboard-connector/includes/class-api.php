@@ -238,6 +238,18 @@ class WBoard_Connector_Api {
 			);
 		}
 
+		// Validation stricte du slug : alphanum, tirets, pas de path traversal.
+		if ( ! preg_match( '/^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$/', $slug ) ) {
+			return new WP_REST_Response(
+				array(
+					'status'  => 'error',
+					'code'    => 'invalid_slug',
+					'message' => 'Le slug contient des caractères invalides.',
+				),
+				400
+			);
+		}
+
 		$updater = new WBoard_Connector_Remote_Updater();
 
 		if ( 'plugin' === $type ) {

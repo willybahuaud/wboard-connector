@@ -430,12 +430,7 @@ class WBoard_Connector_Collector {
 		// Convertit en array et trie par backup_time (plus récent en premier).
 		$reports = array_values( $backup_reports );
 
-		usort(
-			$reports,
-			function ( $a, $b ) {
-				return ( $b['backup_time'] ?? 0 ) <=> ( $a['backup_time'] ?? 0 );
-			}
-		);
+		usort( $reports, array( $this, 'sort_by_backup_time_desc' ) );
 
 		$latest = reset( $reports );
 
@@ -534,12 +529,7 @@ class WBoard_Connector_Collector {
 		$backups = array_values( $backup_list );
 
 		// Trie par date de création (plus récent en premier).
-		usort(
-			$backups,
-			function ( $a, $b ) {
-				return ( $b['create_time'] ?? 0 ) <=> ( $a['create_time'] ?? 0 );
-			}
-		);
+		usort( $backups, array( $this, 'sort_by_create_time_desc' ) );
 
 		$latest = reset( $backups );
 
@@ -654,9 +644,33 @@ class WBoard_Connector_Collector {
 	}
 
 	/**
-	 * Récupère les credentials de stockage distant WPVivid pour le script de restauration.
+	 * Callback de tri : backups par backup_time décroissant.
 	 *
-	 * Retourne les credentials B2/S3 si configurés, permettant au board de générer
+	 * @param array $a Premier élément.
+	 * @param array $b Second élément.
+	 *
+	 * @return int Résultat de comparaison.
+	 */
+	private function sort_by_backup_time_desc( $a, $b ) {
+		return ( $b['backup_time'] ?? 0 ) <=> ( $a['backup_time'] ?? 0 );
+	}
+
+	/**
+	 * Callback de tri : backups par create_time décroissant.
+	 *
+	 * @param array $a Premier élément.
+	 * @param array $b Second élément.
+	 *
+	 * @return int Résultat de comparaison.
+	 */
+	private function sort_by_create_time_desc( $a, $b ) {
+		return ( $b['create_time'] ?? 0 ) <=> ( $a['create_time'] ?? 0 );
+	}
+
+	/**
+	 * Récupère la configuration de stockage distant WPVivid.
+	 *
+	 * Retourne le type, bucket et path si configurés, permettant au board
 	 * la supervision (pas de secrets).
 	 *
 	 * @return array|null Configuration ou null si non configuré.

@@ -154,14 +154,17 @@ class WBoard_Connector_Security {
 	/**
 	 * Récupère l'adresse IP du client.
 	 *
+	 * REMOTE_ADDR en priorité car les headers HTTP sont spoofables.
+	 * Les headers proxy ne sont utilisés qu'en fallback.
+	 *
 	 * @return string Adresse IP.
 	 */
 	private function get_client_ip() {
 		$ip_keys = array(
-			'HTTP_CF_CONNECTING_IP', // Cloudflare.
-			'HTTP_X_FORWARDED_FOR',
-			'HTTP_X_REAL_IP',
 			'REMOTE_ADDR',
+			'HTTP_CF_CONNECTING_IP', // Cloudflare (fiable si Cloudflare est configuré).
+			'HTTP_X_REAL_IP',
+			'HTTP_X_FORWARDED_FOR',
 		);
 
 		foreach ( $ip_keys as $key ) {
