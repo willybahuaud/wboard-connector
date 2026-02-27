@@ -64,8 +64,10 @@ class WBoard_Connector_Remote_Updater {
 			);
 		}
 
-		// Capturer la version actuelle.
-		$old_version = $this->get_plugin_version( $plugin_file );
+		// Capturer la version actuelle et l'etat d'activation.
+		$old_version        = $this->get_plugin_version( $plugin_file );
+		$was_active         = is_plugin_active( $plugin_file );
+		$was_network_active = is_multisite() && is_plugin_active_for_network( $plugin_file );
 
 		// Couper les emails de notification.
 		$this->silence_emails();
@@ -129,6 +131,13 @@ class WBoard_Connector_Remote_Updater {
 				'new_version' => $new_version,
 				'message'     => sprintf( 'La version n\'a pas change (toujours %s).', $old_version ),
 			);
+		}
+
+		// Reactiver le plugin si il etait actif avant la MAJ.
+		// Plugin_Upgrader desactive le plugin pendant l'upgrade et tente
+		// de le reactiver, mais ca peut echouer silencieusement.
+		if ( $was_active && ! is_plugin_active( $plugin_file ) ) {
+			activate_plugin( $plugin_file, '', $was_network_active, true );
 		}
 
 		// Succes : cleanup backup temp.
@@ -243,20 +252,18 @@ class WBoard_Connector_Remote_Updater {
 	}
 
 	/**
-	 * Charge les fichiers admin necessaires pour WP Upgrader.
+	 * Charge l'environnement admin complet necessaire pour WP Upgrader.
+	 *
+	 * En contexte REST API, les includes admin ne sont pas charges.
+	 * Plugin_Upgrader->upgrade() desactive puis reactive le plugin,
+	 * et la reactivation peut echouer si des fonctions admin manquent.
+	 * On charge donc l'ensemble via admin.php pour reproduire le contexte
+	 * du back-office WordPress.
 	 *
 	 * @return void
 	 */
 	private function load_upgrader_dependencies() {
-		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader-skin.php';
-		require_once ABSPATH . 'wp-admin/includes/class-wp-ajax-upgrader-skin.php';
-		require_once ABSPATH . 'wp-admin/includes/class-plugin-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/class-theme-upgrader.php';
-		require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		require_once ABSPATH . 'wp-admin/includes/file.php';
-		require_once ABSPATH . 'wp-admin/includes/misc.php';
-		require_once ABSPATH . 'wp-admin/includes/update.php';
+		require_once ABSPATH . 'wp-admin/includes/admin.php';
 	}
 
 	/**
