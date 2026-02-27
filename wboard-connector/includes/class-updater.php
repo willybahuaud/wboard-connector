@@ -317,8 +317,8 @@ class WBoard_Connector_Updater {
 				if ( isset( $asset->content_type ) && 'application/zip' === $asset->content_type ) {
 					return $asset->browser_download_url;
 				}
-				// Fallback sur l'extension du nom de fichier.
-				if ( isset( $asset->name ) && str_ends_with( $asset->name, '.zip' ) ) {
+				// Fallback sur l'extension du nom de fichier (compatible PHP 7.3).
+				if ( isset( $asset->name ) && '.zip' === substr( $asset->name, -4 ) ) {
 					return $asset->browser_download_url;
 				}
 			}

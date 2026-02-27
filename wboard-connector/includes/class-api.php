@@ -77,17 +77,6 @@ class WBoard_Connector_Api {
 			)
 		);
 
-		// POST /wboard/v1/regenerate-key - Régénère la clé secrète.
-		register_rest_route(
-			self::API_NAMESPACE,
-			'/regenerate-key',
-			array(
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'regenerate_key' ),
-				'permission_callback' => array( $this, 'check_permission' ),
-			)
-		);
-
 		// GET /wboard/v1/backup-credentials - Récupère les credentials de backup distant.
 		register_rest_route(
 			self::API_NAMESPACE,
@@ -187,47 +176,28 @@ class WBoard_Connector_Api {
 	}
 
 	/**
-	 * Régénère la clé secrète du site.
+	 * Récupère la configuration de backup distant (sans secrets).
+	 *
+	 * Retourne le type de stockage, le bucket et le path.
+	 * Les clés API ne sont jamais exposées.
 	 *
 	 * @param WP_REST_Request $request La requête REST.
 	 *
-	 * @return WP_REST_Response La nouvelle clé secrète.
-	 */
-	public function regenerate_key( WP_REST_Request $request ) {
-		$new_key = $this->security->regenerate_secret_key();
-
-		return new WP_REST_Response(
-			array(
-				'success'    => true,
-				'secret_key' => $new_key,
-			),
-			200
-		);
-	}
-
-	/**
-	 * Récupère les credentials de backup distant.
-	 *
-	 * Utilisé par le board pour générer un script de restauration standalone.
-	 * Seul le stockage B2 (Backblaze) est supporté pour l'instant.
-	 *
-	 * @param WP_REST_Request $request La requête REST.
-	 *
-	 * @return WP_REST_Response|WP_Error Les credentials ou une erreur.
+	 * @return WP_REST_Response|WP_Error La config ou une erreur.
 	 */
 	public function get_backup_credentials( WP_REST_Request $request ) {
-		$collector   = new WBoard_Connector_Collector();
-		$credentials = $collector->get_backup_remote_credentials();
+		$collector = new WBoard_Connector_Collector();
+		$config    = $collector->get_backup_remote_config();
 
-		if ( null === $credentials ) {
+		if ( null === $config ) {
 			return new WP_Error(
-				'wboard_no_remote_credentials',
-				__( 'Aucun stockage distant B2 configuré.', 'wboard-connector' ),
+				'wboard_no_remote_config',
+				__( 'Aucun stockage distant configuré.', 'wboard-connector' ),
 				array( 'status' => 404 )
 			);
 		}
 
-		return new WP_REST_Response( $credentials, 200 );
+		return new WP_REST_Response( $config, 200 );
 	}
 
 	/**

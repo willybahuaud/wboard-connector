@@ -3,7 +3,7 @@ Contributors: willybahuaud
 Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
-Requires PHP: 8.0
+Requires PHP: 7.3
 Stable tag: 1.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html

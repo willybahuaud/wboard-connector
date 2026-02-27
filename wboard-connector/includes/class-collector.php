@@ -657,11 +657,11 @@ class WBoard_Connector_Collector {
 	 * Récupère les credentials de stockage distant WPVivid pour le script de restauration.
 	 *
 	 * Retourne les credentials B2/S3 si configurés, permettant au board de générer
-	 * un script de restauration standalone.
+	 * la supervision (pas de secrets).
 	 *
-	 * @return array|null Credentials ou null si non configurés.
+	 * @return array|null Configuration ou null si non configuré.
 	 */
-	public function get_backup_remote_credentials() {
+	public function get_backup_remote_config() {
 		$upload_setting = get_option( 'wpvivid_upload_setting' );
 		$user_history   = get_option( 'wpvivid_user_history' );
 
@@ -679,12 +679,12 @@ class WBoard_Connector_Collector {
 		$remote_config = $upload_setting[ $selected_remote_id ];
 		$type          = $remote_config['type'] ?? '';
 
-		// Seul B2 est supporté pour le script de restauration pour l'instant.
+		// Seul B2/Backblaze est détecté pour l'instant.
 		if ( 'b2' !== $type && 'backblaze' !== $type ) {
 			return null;
 		}
 
-		return $this->extract_b2_credentials( $remote_config );
+		return $this->extract_b2_config( $remote_config );
 	}
 
 	/**
@@ -722,43 +722,29 @@ class WBoard_Connector_Collector {
 	}
 
 	/**
-	 * Extrait les credentials B2 depuis la config remote WPVivid.
+	 * Extrait la configuration B2 depuis la config remote WPVivid.
+	 *
+	 * Ne retourne que les informations non sensibles (pas de clés API).
 	 *
 	 * @param array $remote_config Configuration du remote B2.
 	 *
-	 * @return array Credentials B2 formatés.
+	 * @return array|null Configuration B2 ou null si incomplet.
 	 */
-	private function extract_b2_credentials( $remote_config ) {
-		// WPVivid Pro stocke les credentials sous différentes clés selon la version.
-		// Formats connus : appkeyid, appKeyId, key_id, account_id.
-		$key_id = $remote_config['appkeyid']
-			?? $remote_config['appKeyId']
-			?? $remote_config['key_id']
-			?? $remote_config['account_id']
-			?? '';
-
-		// Formats connus : appkey, appKey, application_key, app_key.
-		$app_key = $remote_config['appkey']
-			?? $remote_config['appKey']
-			?? $remote_config['application_key']
-			?? $remote_config['app_key']
-			?? '';
-
+	private function extract_b2_config( $remote_config ) {
 		$bucket    = $remote_config['bucket'] ?? '';
 		$root_path = trim( $remote_config['root_path'] ?? '', '/' );
 		$path      = trim( $remote_config['path'] ?? '', '/' );
 		$full_path = trim( $root_path . '/' . $path, '/' );
 
-		if ( empty( $key_id ) || empty( $app_key ) || empty( $bucket ) ) {
+		if ( empty( $bucket ) ) {
 			return null;
 		}
 
 		return array(
-			'type'    => 'b2',
-			'key_id'  => $key_id,
-			'app_key' => $app_key,
-			'bucket'  => $bucket,
-			'path'    => $full_path,
+			'type'       => 'b2',
+			'configured' => true,
+			'bucket'     => $bucket,
+			'path'       => $full_path,
 		);
 	}
 

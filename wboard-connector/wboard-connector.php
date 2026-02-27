@@ -87,7 +87,7 @@ function wboard_connector_activate() {
 	// Génère la clé secrète si elle n'existe pas.
 	// get_site_option() fonctionne comme get_option() en mono-site.
 	if ( ! get_site_option( 'wboard_connector_secret_key' ) ) {
-		$secret_key = wp_generate_password( 64, true, true );
+		$secret_key = wp_generate_password( 64, false, false );
 		update_site_option( 'wboard_connector_secret_key', $secret_key );
 	}
 
