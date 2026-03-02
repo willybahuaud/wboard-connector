@@ -98,6 +98,28 @@ class WBoard_Connector_Api {
 				'permission_callback' => array( $this, 'check_permission' ),
 			)
 		);
+
+		// POST /wboard/v1/test-session - Crée une session de test courte durée.
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/test-session',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'create_test_session' ),
+				'permission_callback' => array( $this, 'check_permission' ),
+			)
+		);
+
+		// POST /wboard/v1/destroy-sessions - Détruit les sessions d'utilisateurs.
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/destroy-sessions',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'destroy_sessions' ),
+				'permission_callback' => array( $this, 'check_permission' ),
+			)
+		);
 	}
 
 	/**
@@ -261,5 +283,80 @@ class WBoard_Connector_Api {
 		$http_status = 'success' === $result['status'] ? 200 : 500;
 
 		return new WP_REST_Response( $result, $http_status );
+	}
+
+	/**
+	 * Crée une session de test courte durée.
+	 *
+	 * Génère un token temporaire pour un utilisateur (any role).
+	 * Utilisé par BackstopJS pour naviguer en mode authentifié.
+	 *
+	 * @param WP_REST_Request $request La requête REST contenant l'ID utilisateur.
+	 *
+	 * @return WP_REST_Response|WP_Error L'URL de connexion ou une erreur.
+	 */
+	public function create_test_session( WP_REST_Request $request ) {
+		$test_session = new WBoard_Connector_Test_Session();
+
+		$body    = json_decode( $request->get_body(), true );
+		$user_id = isset( $body['user_id'] ) ? (int) $body['user_id'] : 0;
+
+		if ( empty( $user_id ) ) {
+			return new WP_Error(
+				'wboard_missing_user_id',
+				__( 'ID utilisateur requis.', 'wboard-connector' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$result = $test_session->generate_token( $user_id );
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return new WP_REST_Response( $result, 200 );
+	}
+
+	/**
+	 * Détruit les sessions de plusieurs utilisateurs.
+	 *
+	 * Appelé après un test visuel pour nettoyer les sessions
+	 * de test courte durée.
+	 *
+	 * @param WP_REST_Request $request La requête REST avec les user_ids.
+	 *
+	 * @return WP_REST_Response Résultat de la destruction.
+	 */
+	public function destroy_sessions( WP_REST_Request $request ) {
+		$body     = json_decode( $request->get_body(), true );
+		$user_ids = isset( $body['user_ids'] ) ? array_map( 'intval', (array) $body['user_ids'] ) : array();
+
+		if ( empty( $user_ids ) ) {
+			return new WP_Error(
+				'wboard_missing_user_ids',
+				__( 'Liste d\'IDs utilisateurs requise.', 'wboard-connector' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		$test_session = new WBoard_Connector_Test_Session();
+		$destroyed    = 0;
+
+		foreach ( $user_ids as $user_id ) {
+			$user = get_user_by( 'ID', $user_id );
+			if ( $user ) {
+				$test_session->destroy_user_sessions( $user_id );
+				$destroyed++;
+			}
+		}
+
+		return new WP_REST_Response(
+			array(
+				'success'   => true,
+				'destroyed' => $destroyed,
+			),
+			200
+		);
 	}
 }

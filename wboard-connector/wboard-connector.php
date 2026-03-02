@@ -3,7 +3,7 @@
  * Plugin Name: WBoard Connector
  * Plugin URI: https://github.com/wboard/connector
  * Description: Connecteur pour WBoard - Permet la supervision centralisée du site WordPress.
- * Version: 1.6.2
+ * Version: 1.7.0
  * Requires at least: 6.0
  * Requires PHP: 7.3
  * Author: Willy bahuaud
@@ -22,7 +22,7 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Constantes du plugin.
  */
-define( 'WBOARD_CONNECTOR_VERSION', '1.6.2' );
+define( 'WBOARD_CONNECTOR_VERSION', '1.7.0' );
 define( 'WBOARD_CONNECTOR_FILE', __FILE__ );
 define( 'WBOARD_CONNECTOR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WBOARD_CONNECTOR_URL', plugin_dir_url( __FILE__ ) );
@@ -61,16 +61,18 @@ spl_autoload_register( 'wboard_connector_autoloader' );
  */
 function wboard_connector_init() {
 	// Charge les classes principales.
-	$security  = new WBoard_Connector_Security();
-	$api       = new WBoard_Connector_Api( $security );
-	$settings  = new WBoard_Connector_Settings();
-	$autologin = new WBoard_Connector_Autologin();
-	$updater   = new WBoard_Connector_Updater();
+	$security     = new WBoard_Connector_Security();
+	$api          = new WBoard_Connector_Api( $security );
+	$settings     = new WBoard_Connector_Settings();
+	$autologin    = new WBoard_Connector_Autologin();
+	$test_session = new WBoard_Connector_Test_Session();
+	$updater      = new WBoard_Connector_Updater();
 
 	// Enregistre les hooks.
 	$api->register_hooks();
 	$settings->register_hooks();
 	$autologin->register_hooks();
+	$test_session->register_hooks();
 	$updater->register_hooks();
 }
 add_action( 'plugins_loaded', 'wboard_connector_init' );
