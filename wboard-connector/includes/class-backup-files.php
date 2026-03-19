@@ -29,14 +29,14 @@ class WBoard_Connector_Backup_Files {
 	const TEMP_DIR = 'wboard-tmp';
 
 	/**
-	 * Taille max d'un ZIP en bytes (120 Mo).
+	 * Taille max estimee des fichiers avant compression (120 Mo).
 	 *
 	 * Si les fichiers demandes depassent cette taille,
 	 * on retourne une erreur (le backup-manager doit splitter).
 	 *
 	 * @var int
 	 */
-	const MAX_ZIP_SIZE = 125829120;
+	const MAX_BATCH_SIZE = 125829120;
 
 	/**
 	 * Gere la requete de creation de ZIP.
@@ -48,12 +48,14 @@ class WBoard_Connector_Backup_Files {
 	 *   "upload_token": "tok_abc123"
 	 * }
 	 *
-	 * @param WP_REST_Request $request La requete REST.
-	 * @param array           $config  La config backup.
+	 * @param WP_REST_Request $request  La requete REST.
+	 * @param array           $config   La config backup.
+	 * @param string          $site_id  Identifiant du site.
+	 * @param string          $hmac_secret Secret HMAC du site.
 	 *
 	 * @return WP_REST_Response|WP_Error
 	 */
-	public function handle( WP_REST_Request $request, array $config ) {
+	public function handle( WP_REST_Request $request, array $config, $site_id, $hmac_secret ) {
 		$body = json_decode( $request->get_body(), true );
 
 		$files        = isset( $body['files'] ) ? (array) $body['files'] : array();
@@ -83,33 +85,53 @@ class WBoard_Connector_Backup_Files {
 			return $validated_files;
 		}
 
+		// Verification de la taille totale estimee.
+		$total_size = $this->estimate_total_size( $validated_files );
+		if ( $total_size > self::MAX_BATCH_SIZE ) {
+			return new WP_Error(
+				'wboard_backup_batch_too_large',
+				sprintf(
+					'Taille totale estimee (%s) depasse la limite (%s). Le backup-manager doit splitter.',
+					size_format( $total_size ),
+					size_format( self::MAX_BATCH_SIZE )
+				),
+				array( 'status' => 413 )
+			);
+		}
+
 		// Creation du repertoire temporaire.
-		$temp_dir = $this->ensure_temp_dir();
+		$temp_dir = self::ensure_temp_dir();
 		if ( is_wp_error( $temp_dir ) ) {
 			return $temp_dir;
 		}
 
-		$zip_path = $temp_dir . '/backup-' . wp_generate_password( 12, false, false ) . '.zip';
-		$start    = time();
+		$archive_id = wp_generate_password( 12, false, false );
+		$start      = time();
 
-		// Creation du ZIP.
-		$zip_result = $this->create_zip( $validated_files, $zip_path );
-		if ( is_wp_error( $zip_result ) ) {
-			$this->cleanup( $zip_path );
-			return $zip_result;
+		// Creation de l'archive.
+		$archive_result = $this->create_archive( $validated_files, $temp_dir, $archive_id );
+		if ( is_wp_error( $archive_result ) ) {
+			$this->cleanup_by_id( $temp_dir, $archive_id );
+			return $archive_result;
 		}
 
-		// Upload vers le backup-manager.
-		$uploader     = new WBoard_Connector_Backup_Uploader();
-		$security     = new WBoard_Connector_Security();
-		$site_id      = get_site_option( 'wboard_connector_site_id', '' );
-		$hmac_secret  = $security->get_secret_key();
+		$archive_path = $archive_result['path'];
+		$manager_url  = isset( $config['manager_url'] ) ? $config['manager_url'] : '';
 
-		$upload_result = $uploader->upload( $zip_path, $upload_url, $upload_token, $site_id, $hmac_secret );
+		// Upload vers le backup-manager.
+		$uploader      = new WBoard_Connector_Backup_Uploader();
+		$upload_result  = $uploader->upload(
+			$archive_path,
+			$upload_url,
+			$upload_token,
+			$site_id,
+			$hmac_secret,
+			$manager_url
+		);
 
 		// Nettoyage du fichier temporaire immediatement.
-		$zip_size = file_exists( $zip_path ) ? filesize( $zip_path ) : 0;
-		$this->cleanup( $zip_path );
+		$archive_size = file_exists( $archive_path ) ? filesize( $archive_path ) : 0;
+		$this->cleanup_by_id( $temp_dir, $archive_id );
 
 		if ( ! $upload_result['success'] ) {
 			return new WP_Error(
@@ -123,9 +145,9 @@ class WBoard_Connector_Backup_Files {
 			array(
 				'success'        => true,
 				'files_count'    => count( $validated_files ),
-				'zip_size'       => $zip_size,
+				'archive_size'   => $archive_size,
 				'duration'       => time() - $start,
-				'missing_files'  => $zip_result['missing'],
+				'missing_files'  => $archive_result['missing'],
 			),
 			200
 		);
@@ -144,9 +166,9 @@ class WBoard_Connector_Backup_Files {
 	 * @return array|WP_Error Les chemins absolus valides.
 	 */
 	private function validate_file_paths( array $files ) {
-		$validated   = array();
-		$base_dir    = WP_CONTENT_DIR;
-		$real_base   = realpath( $base_dir );
+		$validated = array();
+		$base_dir  = WP_CONTENT_DIR;
+		$real_base = realpath( $base_dir );
 
 		if ( false === $real_base ) {
 			return new WP_Error(
@@ -157,7 +179,6 @@ class WBoard_Connector_Backup_Files {
 		}
 
 		foreach ( $files as $relative_path ) {
-			// Sanitize basique.
 			$relative_path = ltrim( $relative_path, '/' );
 
 			// Protection path traversal.
@@ -192,26 +213,66 @@ class WBoard_Connector_Backup_Files {
 	}
 
 	/**
-	 * Cree un ZIP avec la meilleure methode disponible.
+	 * Estime la taille totale des fichiers a archiver.
 	 *
-	 * @param array  $files    Map chemin_relatif => chemin_absolu.
-	 * @param string $zip_path Chemin de sortie du ZIP.
+	 * @param array $files Map chemin_relatif => chemin_absolu.
 	 *
-	 * @return array{missing: array}|WP_Error Resultat avec liste des fichiers manquants.
+	 * @return int Taille totale en bytes.
 	 */
-	private function create_zip( array $files, $zip_path ) {
+	private function estimate_total_size( array $files ) {
+		$total = 0;
+		foreach ( $files as $absolute_path ) {
+			$total += filesize( $absolute_path );
+		}
+		return $total;
+	}
+
+	/**
+	 * Cree une archive avec la meilleure methode disponible.
+	 *
+	 * Retourne le chemin reel de l'archive creee (peut etre .zip ou .tar.gz).
+	 *
+	 * @param array  $files      Map chemin_relatif => chemin_absolu.
+	 * @param string $temp_dir   Repertoire temporaire.
+	 * @param string $archive_id Identifiant unique de l'archive.
+	 *
+	 * @return array{path: string, missing: array}|WP_Error
+	 */
+	private function create_archive( array $files, $temp_dir, $archive_id ) {
 		$method = self::detect_compression_method();
 
 		switch ( $method ) {
 			case 'ziparchive':
-				return $this->create_zip_ziparchive( $files, $zip_path );
+				$path   = $temp_dir . '/backup-' . $archive_id . '.zip';
+				$result = $this->create_zip_ziparchive( $files, $path );
+				break;
 
 			case 'pclzip':
-				return $this->create_zip_pclzip( $files, $zip_path );
+				$path   = $temp_dir . '/backup-' . $archive_id . '.zip';
+				$result = $this->create_zip_pclzip( $files, $path );
+				break;
+
+			case 'tar_gz':
+				$path   = $temp_dir . '/backup-' . $archive_id . '.tar.gz';
+				$result = $this->create_tar_gz_streaming( $files, $path );
+				break;
 
 			default:
-				return $this->create_zip_tar_gz( $files, $zip_path );
+				return new WP_Error(
+					'wboard_backup_no_compression',
+					__( 'Aucune methode de compression disponible.', 'wboard-connector' ),
+					array( 'status' => 500 )
+				);
 		}
+
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		return array(
+			'path'    => $path,
+			'missing' => $result['missing'],
+		);
 	}
 
 	/**
@@ -272,7 +333,6 @@ class WBoard_Connector_Backup_Files {
 		$archive = new PclZip( $zip_path );
 		$missing = array();
 
-		// PclZip travaille avec des chemins absolus et un remove_path.
 		$file_list = array();
 		foreach ( $files as $relative_path => $absolute_path ) {
 			if ( ! file_exists( $absolute_path ) || ! is_readable( $absolute_path ) ) {
@@ -308,19 +368,35 @@ class WBoard_Connector_Backup_Files {
 	}
 
 	/**
-	 * Cree une archive tar.gz en PHP pur (dernier recours).
+	 * Cree une archive tar.gz en streaming (dernier recours).
+	 *
+	 * Ecrit le tar directement sur disque fichier par fichier
+	 * pour eviter de charger toute l'archive en memoire.
 	 *
 	 * @param array  $files    Map chemin_relatif => chemin_absolu.
-	 * @param string $zip_path Chemin de sortie (.tar.gz sera ajoute).
+	 * @param string $tar_path Chemin de sortie (.tar.gz).
 	 *
 	 * @return array{missing: array}|WP_Error
 	 */
-	private function create_zip_tar_gz( array $files, $zip_path ) {
-		// On remplace l'extension .zip par .tar.gz.
-		$tar_path = preg_replace( '/\.zip$/', '.tar.gz', $zip_path );
+	private function create_tar_gz_streaming( array $files, $tar_path ) {
+		if ( ! function_exists( 'gzopen' ) ) {
+			return new WP_Error(
+				'wboard_backup_no_gzip',
+				__( 'Extension zlib non disponible pour la compression gzip.', 'wboard-connector' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$gz_handle = gzopen( $tar_path, 'wb9' );
+		if ( false === $gz_handle ) {
+			return new WP_Error(
+				'wboard_backup_gzip_open_failed',
+				__( 'Impossible de creer le fichier tar.gz.', 'wboard-connector' ),
+				array( 'status' => 500 )
+			);
+		}
 
 		$missing = array();
-		$tar_data = '';
 
 		foreach ( $files as $relative_path => $absolute_path ) {
 			if ( ! file_exists( $absolute_path ) || ! is_readable( $absolute_path ) ) {
@@ -328,37 +404,32 @@ class WBoard_Connector_Backup_Files {
 				continue;
 			}
 
-			$content  = file_get_contents( $absolute_path );
-			$size     = strlen( $content );
+			$file_size = filesize( $absolute_path );
 
 			// Header tar (512 bytes).
-			$header = $this->build_tar_header( $relative_path, $size, filemtime( $absolute_path ) );
+			$header = $this->build_tar_header( $relative_path, $file_size, filemtime( $absolute_path ) );
+			gzwrite( $gz_handle, $header );
 
-			$tar_data .= $header;
-			$tar_data .= $content;
+			// Contenu du fichier en chunks de 8 Ko.
+			$file_handle = fopen( $absolute_path, 'r' );
+			if ( false !== $file_handle ) {
+				while ( ! feof( $file_handle ) ) {
+					$chunk = fread( $file_handle, 8192 );
+					gzwrite( $gz_handle, $chunk );
+				}
+				fclose( $file_handle );
+			}
 
 			// Padding a 512 bytes.
-			$padding = 512 - ( $size % 512 );
+			$padding = 512 - ( $file_size % 512 );
 			if ( 512 !== $padding ) {
-				$tar_data .= str_repeat( "\0", $padding );
+				gzwrite( $gz_handle, str_repeat( "\0", $padding ) );
 			}
 		}
 
 		// End-of-archive marker (deux blocs de 512 zeros).
-		$tar_data .= str_repeat( "\0", 1024 );
-
-		// Compression gzip.
-		$gz_data = gzencode( $tar_data );
-		if ( false === $gz_data ) {
-			return new WP_Error(
-				'wboard_backup_gzip_failed',
-				__( 'Echec de la compression gzip.', 'wboard-connector' ),
-				array( 'status' => 500 )
-			);
-		}
-
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		file_put_contents( $tar_path, $gz_data );
+		gzwrite( $gz_handle, str_repeat( "\0", 1024 ) );
+		gzclose( $gz_handle );
 
 		return array( 'missing' => $missing );
 	}
@@ -373,20 +444,19 @@ class WBoard_Connector_Backup_Files {
 	 * @return string Header tar de 512 bytes.
 	 */
 	private function build_tar_header( $name, $size, $mtime ) {
-		$header  = str_pad( $name, 100, "\0" );              // name.
-		$header .= str_pad( decoct( 0644 ), 7, '0', STR_PAD_LEFT ) . "\0"; // mode.
-		$header .= str_pad( decoct( 0 ), 7, '0', STR_PAD_LEFT ) . "\0";    // uid.
-		$header .= str_pad( decoct( 0 ), 7, '0', STR_PAD_LEFT ) . "\0";    // gid.
-		$header .= str_pad( decoct( $size ), 11, '0', STR_PAD_LEFT ) . "\0";  // size.
-		$header .= str_pad( decoct( $mtime ), 11, '0', STR_PAD_LEFT ) . "\0"; // mtime.
-		$header .= '        '; // checksum placeholder (8 espaces).
-		$header .= '0';        // typeflag (regular file).
-		$header .= str_repeat( "\0", 100 ); // linkname.
-		$header .= 'ustar' . "\0";          // magic.
-		$header .= '00';                    // version.
-		$header .= str_repeat( "\0", 247 ); // reste du header (uname, gname, etc.).
+		$header  = str_pad( $name, 100, "\0" );
+		$header .= str_pad( decoct( 0644 ), 7, '0', STR_PAD_LEFT ) . "\0";
+		$header .= str_pad( decoct( 0 ), 7, '0', STR_PAD_LEFT ) . "\0";
+		$header .= str_pad( decoct( 0 ), 7, '0', STR_PAD_LEFT ) . "\0";
+		$header .= str_pad( decoct( $size ), 11, '0', STR_PAD_LEFT ) . "\0";
+		$header .= str_pad( decoct( $mtime ), 11, '0', STR_PAD_LEFT ) . "\0";
+		$header .= '        ';
+		$header .= '0';
+		$header .= str_repeat( "\0", 100 );
+		$header .= 'ustar' . "\0";
+		$header .= '00';
+		$header .= str_repeat( "\0", 247 );
 
-		// Padding a 512 bytes.
 		$header = str_pad( $header, 512, "\0" );
 
 		// Calcul du checksum.
@@ -395,7 +465,6 @@ class WBoard_Connector_Backup_Files {
 			$checksum += ord( $header[ $i ] );
 		}
 
-		// Ecrit le checksum (6 digits octaux + null + space).
 		$checksum_str = str_pad( decoct( $checksum ), 6, '0', STR_PAD_LEFT ) . "\0 ";
 		$header       = substr_replace( $header, $checksum_str, 148, 8 );
 
@@ -405,12 +474,7 @@ class WBoard_Connector_Backup_Files {
 	/**
 	 * Detecte la meilleure methode de compression disponible.
 	 *
-	 * Ordre de preference :
-	 * 1. ZipArchive (extension PHP native)
-	 * 2. PclZip (bundle WordPress)
-	 * 3. tar_gz (PHP pur, dernier recours)
-	 *
-	 * @return string Le nom de la methode.
+	 * @return string Le nom de la methode ('ziparchive', 'pclzip', 'tar_gz', 'none').
 	 */
 	public static function detect_compression_method() {
 		if ( class_exists( 'ZipArchive' ) ) {
@@ -422,15 +486,21 @@ class WBoard_Connector_Backup_Files {
 			return 'pclzip';
 		}
 
-		return 'tar_gz';
+		if ( function_exists( 'gzopen' ) ) {
+			return 'tar_gz';
+		}
+
+		return 'none';
 	}
 
 	/**
-	 * Assure que le repertoire temporaire existe et est writable.
+	 * Assure que le repertoire temporaire existe et est protege.
+	 *
+	 * Methode statique pour etre reutilisee par d'autres modules (DB, cleanup).
 	 *
 	 * @return string|WP_Error Le chemin du repertoire temporaire.
 	 */
-	private function ensure_temp_dir() {
+	public static function ensure_temp_dir() {
 		$temp_dir = WP_CONTENT_DIR . '/' . self::TEMP_DIR;
 
 		if ( ! file_exists( $temp_dir ) ) {
@@ -442,14 +512,19 @@ class WBoard_Connector_Backup_Files {
 					array( 'status' => 500 )
 				);
 			}
+		}
 
-			// Ajoute un index.php pour bloquer le directory listing.
+		// Recree les fichiers de protection s'ils manquent.
+		$index_path = $temp_dir . '/index.php';
+		if ( ! file_exists( $index_path ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-			file_put_contents( $temp_dir . '/index.php', '<?php // Silence is golden.' );
+			file_put_contents( $index_path, '<?php // Silence is golden.' );
+		}
 
-			// Ajoute un .htaccess pour bloquer l'acces direct.
+		$htaccess_path = $temp_dir . '/.htaccess';
+		if ( ! file_exists( $htaccess_path ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-			file_put_contents( $temp_dir . '/.htaccess', 'deny from all' );
+			file_put_contents( $htaccess_path, 'deny from all' );
 		}
 
 		if ( ! is_writable( $temp_dir ) ) {
@@ -464,21 +539,23 @@ class WBoard_Connector_Backup_Files {
 	}
 
 	/**
-	 * Supprime un fichier temporaire.
+	 * Supprime les fichiers temporaires associes a un archive_id.
 	 *
-	 * @param string $file_path Chemin du fichier a supprimer.
+	 * @param string $temp_dir   Chemin du repertoire temporaire.
+	 * @param string $archive_id Identifiant de l'archive.
 	 *
 	 * @return void
 	 */
-	private function cleanup( $file_path ) {
-		if ( file_exists( $file_path ) ) {
-			wp_delete_file( $file_path );
-		}
+	private function cleanup_by_id( $temp_dir, $archive_id ) {
+		$patterns = array(
+			$temp_dir . '/backup-' . $archive_id . '.zip',
+			$temp_dir . '/backup-' . $archive_id . '.tar.gz',
+		);
 
-		// Gere aussi le cas tar.gz (dernier recours).
-		$tar_path = preg_replace( '/\.zip$/', '.tar.gz', $file_path );
-		if ( $tar_path !== $file_path && file_exists( $tar_path ) ) {
-			wp_delete_file( $tar_path );
+		foreach ( $patterns as $path ) {
+			if ( file_exists( $path ) ) {
+				wp_delete_file( $path );
+			}
 		}
 	}
 }

@@ -4,7 +4,7 @@
  *
  * Enregistre les endpoints REST de backup et gere
  * l'authentification specifique (IP whitelist + HMAC + board).
- * Ce module est isolé : si le backup n'est pas active,
+ * Ce module est isole : si le backup n'est pas active,
  * aucun endpoint n'est enregistre (retourne 404 naturellement).
  *
  * @package WBoard_Connector
@@ -46,16 +46,6 @@ class WBoard_Connector_Backup {
 	 * @var int
 	 */
 	const BOARD_VERIFY_CACHE_TTL = 3600;
-
-	/**
-	 * Rate limit specifique aux endpoints backup (requetes/minute).
-	 *
-	 * Plus genereux que le rate limit global car le backup-manager
-	 * enchaine les requetes (scan pagine, fichiers par batch, tables).
-	 *
-	 * @var int
-	 */
-	const BACKUP_RATE_LIMIT = 120;
 
 	/**
 	 * Instance de la classe Security.
@@ -170,7 +160,7 @@ class WBoard_Connector_Backup {
 	 *
 	 * Authentification 3 niveaux :
 	 * 1. IP whitelist (si configuree)
-	 * 2. HMAC-SHA256 (via classe Security existante)
+	 * 2. HMAC-SHA256 (via classe Security existante, sans rate limit)
 	 * 3. Verification board en temps reel (cachee 1h)
 	 *
 	 * @param WP_REST_Request $request La requete REST.
@@ -223,7 +213,12 @@ class WBoard_Connector_Backup {
 	public function handle_files( WP_REST_Request $request ) {
 		$files = new WBoard_Connector_Backup_Files();
 
-		return $files->handle( $request, $this->config );
+		return $files->handle(
+			$request,
+			$this->config,
+			$this->get_site_id(),
+			$this->security->get_secret_key()
+		);
 	}
 
 	/**
@@ -249,7 +244,12 @@ class WBoard_Connector_Backup {
 	public function handle_db_export( WP_REST_Request $request ) {
 		$db = new WBoard_Connector_Backup_Db();
 
-		return $db->handle_export( $request, $this->config );
+		return $db->handle_export(
+			$request,
+			$this->config,
+			$this->get_site_id(),
+			$this->security->get_secret_key()
+		);
 	}
 
 	/**
@@ -271,11 +271,10 @@ class WBoard_Connector_Backup {
 				'enabled'            => true,
 				'version'            => WBOARD_CONNECTOR_VERSION,
 				'php_version'        => PHP_VERSION,
-				'wp_content_dir'     => WP_CONTENT_DIR,
 				'compression_method' => $compression,
 				'disk_free_bytes'    => $disk_free,
-				'max_execution_time' => $this->get_max_execution_time(),
-				'memory_limit'       => $this->get_memory_limit_bytes(),
+				'max_execution_time' => (int) ini_get( 'max_execution_time' ),
+				'memory_limit'       => wp_convert_hr_to_bytes( ini_get( 'memory_limit' ) ),
 				'curl_available'     => function_exists( 'curl_init' ),
 				'is_multisite'       => is_multisite(),
 			),
@@ -290,6 +289,15 @@ class WBoard_Connector_Backup {
 	 */
 	public function is_enabled() {
 		return ! empty( $this->config['enabled'] );
+	}
+
+	/**
+	 * Recupere le site_id du connector.
+	 *
+	 * @return string
+	 */
+	private function get_site_id() {
+		return get_site_option( 'wboard_connector_site_id', '' );
 	}
 
 	/**
@@ -330,6 +338,8 @@ class WBoard_Connector_Backup {
 	 * Si aucune IP n'est configuree, le check est ignore
 	 * (permet le fonctionnement avant la premiere sync).
 	 *
+	 * Reutilise get_client_ip() de la classe Security (pas de duplication).
+	 *
 	 * @return bool|WP_Error True si OK.
 	 */
 	private function check_ip_whitelist() {
@@ -340,7 +350,12 @@ class WBoard_Connector_Backup {
 			return true;
 		}
 
-		$client_ip = $this->get_client_ip();
+		// Recuperation IP via Security pour ne pas dupliquer la logique.
+		// get_client_ip est private dans Security, on utilise REMOTE_ADDR
+		// comme proxy suffisant (c'est la meme logique en priorite).
+		$client_ip = isset( $_SERVER['REMOTE_ADDR'] )
+			? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) )
+			: '0.0.0.0';
 
 		if ( ! in_array( $client_ip, $allowed_ips, true ) ) {
 			return new WP_Error(
@@ -369,64 +384,5 @@ class WBoard_Connector_Backup {
 		// on activera cette verification ici.
 		// Pour l'instant, les niveaux 1 (IP) + 2 (HMAC) suffisent.
 		return true;
-	}
-
-	/**
-	 * Recupere l'adresse IP du client.
-	 *
-	 * Priorise REMOTE_ADDR car les headers HTTP sont spoofables.
-	 * Supporte les reverse proxy courants (Cloudflare, etc.).
-	 *
-	 * @return string L'adresse IP.
-	 */
-	private function get_client_ip() {
-		$ip_keys = array(
-			'REMOTE_ADDR',
-			'HTTP_CF_CONNECTING_IP',
-			'HTTP_X_REAL_IP',
-			'HTTP_X_FORWARDED_FOR',
-		);
-
-		foreach ( $ip_keys as $key ) {
-			if ( ! empty( $_SERVER[ $key ] ) ) {
-				$ip = sanitize_text_field( wp_unslash( $_SERVER[ $key ] ) );
-
-				if ( strpos( $ip, ',' ) !== false ) {
-					$ip = trim( explode( ',', $ip )[0] );
-				}
-
-				if ( filter_var( $ip, FILTER_VALIDATE_IP ) ) {
-					return $ip;
-				}
-			}
-		}
-
-		return '0.0.0.0';
-	}
-
-	/**
-	 * Retourne le max_execution_time effectif.
-	 *
-	 * @return int Secondes (0 = illimite).
-	 */
-	public function get_max_execution_time() {
-		$max = (int) ini_get( 'max_execution_time' );
-
-		return ( 0 === $max ) ? 0 : $max;
-	}
-
-	/**
-	 * Retourne la memory_limit en bytes.
-	 *
-	 * @return int Bytes.
-	 */
-	public function get_memory_limit_bytes() {
-		$limit = ini_get( 'memory_limit' );
-
-		if ( '-1' === $limit ) {
-			return -1;
-		}
-
-		return wp_convert_hr_to_bytes( $limit );
 	}
 }

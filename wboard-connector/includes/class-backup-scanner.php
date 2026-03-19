@@ -131,7 +131,9 @@ class WBoard_Connector_Backup_Scanner {
 					continue;
 				}
 
-				$relative_path = substr( $pathname, $base_path_len );
+				// Normalise le separateur de chemin AVANT les checks d'exclusion
+				// (sur Windows les chemins contiennent des \ qui casseraient le matching).
+				$relative_path = str_replace( '\\', '/', substr( $pathname, $base_path_len ) );
 
 				// Verifie les exclusions de repertoires.
 				if ( $this->is_dir_excluded( $relative_path, $excluded_dirs ) ) {
@@ -144,9 +146,6 @@ class WBoard_Connector_Backup_Scanner {
 					$current_index++;
 					continue;
 				}
-
-				// Normalise le separateur de chemin (Windows compat).
-				$relative_path = str_replace( '\\', '/', $relative_path );
 
 				$mtime = $file->getMTime();
 				$size  = $file->getSize();

@@ -117,12 +117,14 @@ class WBoard_Connector_Backup_Db {
 	 *   "upload_token": "tok_abc123"
 	 * }
 	 *
-	 * @param WP_REST_Request $request La requete REST.
-	 * @param array           $config  La config backup.
+	 * @param WP_REST_Request $request     La requete REST.
+	 * @param array           $config      La config backup.
+	 * @param string          $site_id     Identifiant du site.
+	 * @param string          $hmac_secret Secret HMAC du site.
 	 *
 	 * @return WP_REST_Response|WP_Error
 	 */
-	public function handle_export( WP_REST_Request $request, array $config ) {
+	public function handle_export( WP_REST_Request $request, array $config, $site_id, $hmac_secret ) {
 		global $wpdb;
 
 		$body         = json_decode( $request->get_body(), true );
@@ -201,16 +203,15 @@ class WBoard_Connector_Backup_Db {
 
 		// Upload vers le backup-manager.
 		$uploader    = new WBoard_Connector_Backup_Uploader();
-		$security    = new WBoard_Connector_Security();
-		$site_id     = get_site_option( 'wboard_connector_site_id', '' );
-		$hmac_secret = $security->get_secret_key();
+		$manager_url = isset( $config['manager_url'] ) ? $config['manager_url'] : '';
 
 		$upload_result = $uploader->upload(
 			$result['file_path'],
 			$upload_url,
 			$upload_token,
 			$site_id,
-			$hmac_secret
+			$hmac_secret,
+			$manager_url
 		);
 
 		// Nettoyage du fichier temporaire.
@@ -322,30 +323,30 @@ class WBoard_Connector_Backup_Db {
 	/**
 	 * Verifie si une table correspond a un pattern d'exclusion.
 	 *
-	 * Les patterns supportent le wildcard * en debut et fin.
-	 * Exemple : *_sessions, *_actionscheduler_*
+	 * Patterns supportes :
+	 * - Nom exact : "wp_sessions"
+	 * - Wildcard debut : "*_sessions" (match toute table finissant par _sessions)
+	 * - Wildcard fin : "wp_action*" (match toute table commencant par wp_action)
+	 * - Double wildcard : "*_actionscheduler_*"
+	 *
+	 * Le matching se fait sur le nom complet de la table.
 	 *
 	 * @param string $table_name Nom complet de la table.
 	 * @param array  $patterns   Patterns d'exclusion.
-	 * @param string $prefix     Prefixe WordPress.
+	 * @param string $prefix     Prefixe WordPress (non utilise dans le matching simple).
 	 *
 	 * @return bool True si la table est exclue.
 	 */
 	private function is_table_excluded( $table_name, array $patterns, $prefix ) {
-		// Nom sans le prefixe pour le matching.
-		$short_name = substr( $table_name, strlen( $prefix ) );
-
 		foreach ( $patterns as $pattern ) {
-			// Remplace * par le prefixe pour le matching sur nom complet.
-			$regex_pattern = str_replace( '*', '.*', preg_quote( $pattern, '/' ) );
+			// Echappe le pattern pour regex, sauf les *.
+			// On remplace d'abord les * par un placeholder, on quote, puis on remet.
+			$placeholder = '___WILDCARD___';
+			$safe        = str_replace( '*', $placeholder, $pattern );
+			$safe        = preg_quote( $safe, '/' );
+			$regex       = str_replace( $placeholder, '.*', $safe );
 
-			if ( preg_match( '/^' . $regex_pattern . '$/', $table_name ) ) {
-				return true;
-			}
-
-			// Essaie aussi sur le nom court (sans prefixe).
-			$short_pattern = str_replace( '*', '.*', preg_quote( str_replace( '*_', '', $pattern ), '/' ) );
-			if ( preg_match( '/^' . $short_pattern . '$/', $short_name ) ) {
+			if ( preg_match( '/^' . $regex . '$/', $table_name ) ) {
 				return true;
 			}
 		}
@@ -363,16 +364,16 @@ class WBoard_Connector_Backup_Db {
 	 * @return int Taille de batch effective.
 	 */
 	private function adapt_batch_size( $requested ) {
-		$memory_limit = $this->get_memory_limit_bytes();
+		$memory_limit = wp_convert_hr_to_bytes( ini_get( 'memory_limit' ) );
 
 		// Si illimite, utilise la taille demandee.
-		if ( -1 === $memory_limit ) {
+		if ( -1 === (int) $memory_limit || 0 === $memory_limit ) {
 			return max( self::MIN_BATCH_SIZE, min( $requested, self::MAX_BATCH_SIZE ) );
 		}
 
-		$memory_used     = memory_get_usage( true );
-		$memory_free     = $memory_limit - $memory_used;
-		$usable_memory   = (int) ( $memory_free * 0.3 );
+		$memory_used   = memory_get_usage( true );
+		$memory_free   = $memory_limit - $memory_used;
+		$usable_memory = (int) ( $memory_free * 0.3 );
 
 		// Estimation grossiere : ~1 Ko par ligne en moyenne.
 		$estimated_batch = (int) ( $usable_memory / 1024 );
@@ -387,6 +388,8 @@ class WBoard_Connector_Backup_Db {
 	/**
 	 * Exporte les lignes d'une table en fichier SQL.
 	 *
+	 * Precondition : $table a ete valide par regex /^[a-zA-Z0-9_]+$/ dans handle_export().
+	 *
 	 * @param string      $table       Nom de la table.
 	 * @param string|null $primary_key Nom de la colonne PK (null si pas de PK).
 	 * @param int         $cursor      Valeur du curseur (dernier ID exporte).
@@ -397,13 +400,15 @@ class WBoard_Connector_Backup_Db {
 	private function export_table( $table, $primary_key, $cursor, $batch_size ) {
 		global $wpdb;
 
-		// Repertoire temporaire.
-		$temp_dir = WP_CONTENT_DIR . '/wboard-tmp';
-		if ( ! file_exists( $temp_dir ) ) {
-			wp_mkdir_p( $temp_dir );
+		// Reutilise le temp dir securise (avec index.php et .htaccess).
+		$temp_dir = WBoard_Connector_Backup_Files::ensure_temp_dir();
+		if ( is_wp_error( $temp_dir ) ) {
+			return $temp_dir;
 		}
 
-		$file_path = $temp_dir . '/export-' . $table . '-' . $cursor . '.sql';
+		// Nom de fichier imprevisible (anti-acces direct + anti-concurrence).
+		$file_id   = wp_generate_password( 8, false, false );
+		$file_path = $temp_dir . '/export-' . $file_id . '.sql';
 		$handle    = fopen( $file_path, 'w' );
 
 		if ( false === $handle ) {
@@ -435,15 +440,9 @@ class WBoard_Connector_Backup_Db {
 		$last_id       = $cursor;
 
 		if ( ! empty( $rows ) ) {
-			// Recupere les noms de colonnes.
-			$columns = array_keys( (array) $rows[0] );
-			$columns_escaped = array_map(
-				function ( $col ) {
-					return '`' . $col . '`';
-				},
-				$columns
-			);
-			$columns_str = implode( ', ', $columns_escaped );
+			$columns         = array_keys( (array) $rows[0] );
+			$columns_escaped = array_map( array( $this, 'escape_column_name' ), $columns );
+			$columns_str     = implode( ', ', $columns_escaped );
 
 			foreach ( $rows as $row ) {
 				$row = (array) $row;
@@ -463,7 +462,6 @@ class WBoard_Connector_Backup_Db {
 
 				$rows_exported++;
 
-				// Met a jour le curseur.
 				if ( ! empty( $primary_key ) && isset( $row[ $primary_key ] ) ) {
 					$last_id = (int) $row[ $primary_key ];
 				}
@@ -477,7 +475,6 @@ class WBoard_Connector_Backup_Db {
 			$last_id = $cursor + $rows_exported;
 		}
 
-		// Determine si l'export de cette table est complet.
 		$is_complete = ( count( $rows ) < $batch_size );
 
 		return array(
@@ -486,6 +483,17 @@ class WBoard_Connector_Backup_Db {
 			'complete'      => $is_complete,
 			'rows_exported' => $rows_exported,
 		);
+	}
+
+	/**
+	 * Echappe un nom de colonne SQL avec des backticks.
+	 *
+	 * @param string $column_name Le nom de la colonne.
+	 *
+	 * @return string Le nom echappe.
+	 */
+	private function escape_column_name( $column_name ) {
+		return '`' . $column_name . '`';
 	}
 
 	/**
@@ -503,7 +511,7 @@ class WBoard_Connector_Backup_Db {
 	private function fetch_rows_by_pk( $table, $primary_key, $cursor, $batch_size ) {
 		global $wpdb;
 
-		// Le nom de table et de colonne ont deja ete valides.
+		// Le nom de table et de colonne ont ete valides par regex dans handle_export().
 		// On ne peut pas utiliser prepare() pour les identifiants SQL.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$rows = $wpdb->get_results(
@@ -546,7 +554,10 @@ class WBoard_Connector_Backup_Db {
 	/**
 	 * Recupere le CREATE TABLE statement.
 	 *
-	 * @param string $table Nom de la table.
+	 * SHOW CREATE TABLE n'accepte pas de placeholder prepare(),
+	 * mais le nom de table a ete valide par regex en amont.
+	 *
+	 * @param string $table Nom de la table (valide par regex /^[a-zA-Z0-9_]+$/).
 	 *
 	 * @return string|null Le CREATE TABLE ou null.
 	 */
@@ -561,20 +572,5 @@ class WBoard_Connector_Backup_Db {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Retourne la memory_limit en bytes.
-	 *
-	 * @return int Bytes (-1 si illimite).
-	 */
-	private function get_memory_limit_bytes() {
-		$limit = ini_get( 'memory_limit' );
-
-		if ( '-1' === $limit ) {
-			return -1;
-		}
-
-		return wp_convert_hr_to_bytes( $limit );
 	}
 }
