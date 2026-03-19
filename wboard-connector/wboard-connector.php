@@ -114,6 +114,9 @@ register_activation_hook( __FILE__, 'wboard_connector_activate' );
 function wboard_connector_deactivate() {
 	// Supprime les transients liés au plugin.
 	delete_transient( 'wboard_connector_last_request' );
+
+	// Desinscrit le cron de nettoyage backup.
+	WBoard_Connector_Backup_Cleanup::unschedule();
 }
 register_deactivation_hook( __FILE__, 'wboard_connector_deactivate' );
 

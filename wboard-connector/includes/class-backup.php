@@ -85,10 +85,17 @@ class WBoard_Connector_Backup {
 	 * Enregistre les hooks WordPress.
 	 *
 	 * Les routes ne sont enregistrees que si le backup est active.
+	 * Le cron de nettoyage est toujours active (pour nettoyer
+	 * les fichiers orphelins meme si on desactive le backup).
 	 *
 	 * @return void
 	 */
 	public function register_hooks() {
+		// Le cron de nettoyage tourne meme si le backup est desactive
+		// (pour purger les fichiers orphelins apres desactivation).
+		WBoard_Connector_Backup_Cleanup::schedule();
+		add_action( WBoard_Connector_Backup_Cleanup::CRON_HOOK, array( 'WBoard_Connector_Backup_Cleanup', 'run' ) );
+
 		if ( ! $this->is_enabled() ) {
 			return;
 		}
