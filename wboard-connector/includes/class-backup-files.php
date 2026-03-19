@@ -200,8 +200,7 @@ class WBoard_Connector_Backup_Files {
 	 * @return array{missing: array}|WP_Error Resultat avec liste des fichiers manquants.
 	 */
 	private function create_zip( array $files, $zip_path ) {
-		$backup = new WBoard_Connector_Backup( new WBoard_Connector_Security() );
-		$method = $backup->detect_compression_method();
+		$method = self::detect_compression_method();
 
 		switch ( $method ) {
 			case 'ziparchive':
@@ -401,6 +400,29 @@ class WBoard_Connector_Backup_Files {
 		$header       = substr_replace( $header, $checksum_str, 148, 8 );
 
 		return $header;
+	}
+
+	/**
+	 * Detecte la meilleure methode de compression disponible.
+	 *
+	 * Ordre de preference :
+	 * 1. ZipArchive (extension PHP native)
+	 * 2. PclZip (bundle WordPress)
+	 * 3. tar_gz (PHP pur, dernier recours)
+	 *
+	 * @return string Le nom de la methode.
+	 */
+	public static function detect_compression_method() {
+		if ( class_exists( 'ZipArchive' ) ) {
+			return 'ziparchive';
+		}
+
+		$pclzip_path = ABSPATH . 'wp-admin/includes/class-pclzip.php';
+		if ( file_exists( $pclzip_path ) ) {
+			return 'pclzip';
+		}
+
+		return 'tar_gz';
 	}
 
 	/**

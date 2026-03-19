@@ -250,6 +250,43 @@ class WBoard_Connector_Security {
 	}
 
 	/**
+	 * Verifie la requete sans rate limiting.
+	 *
+	 * Utilise par le module backup qui a son propre rate limit
+	 * plus genereux (le backup-manager enchaine les requetes).
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 *
+	 * @return bool|WP_Error True si valide, WP_Error sinon.
+	 */
+	public function verify_request_no_ratelimit( WP_REST_Request $request ) {
+		$timestamp = $request->get_header( 'X-WBoard-Timestamp' );
+		$signature = $request->get_header( 'X-WBoard-Signature' );
+
+		if ( empty( $timestamp ) || empty( $signature ) ) {
+			return new WP_Error(
+				'wboard_missing_headers',
+				__( 'Headers de sécurité manquants.', 'wboard-connector' ),
+				array( 'status' => 401 )
+			);
+		}
+
+		$timestamp_check = $this->verify_timestamp( (int) $timestamp );
+		if ( is_wp_error( $timestamp_check ) ) {
+			return $timestamp_check;
+		}
+
+		$signature_check = $this->verify_signature( $request, $signature, (int) $timestamp );
+		if ( is_wp_error( $signature_check ) ) {
+			return $signature_check;
+		}
+
+		$this->update_last_request_time();
+
+		return true;
+	}
+
+	/**
 	 * Récupère la clé secrète du plugin.
 	 *
 	 * En multisite, la clé est stockée au niveau réseau (wp_sitemeta).

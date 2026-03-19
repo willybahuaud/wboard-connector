@@ -177,8 +177,9 @@ class WBoard_Connector_Backup {
 			return $ip_check;
 		}
 
-		// Niveau 2 : verification HMAC (reutilise la classe Security existante).
-		$hmac_check = $this->security->verify_request( $request );
+		// Niveau 2 : verification HMAC (sans le rate limit global a 30/min,
+		// car le backup-manager enchaine les requetes).
+		$hmac_check = $this->security->verify_request_no_ratelimit( $request );
 		if ( is_wp_error( $hmac_check ) ) {
 			return $hmac_check;
 		}
@@ -256,7 +257,7 @@ class WBoard_Connector_Backup {
 			? @disk_free_space( WP_CONTENT_DIR )
 			: null;
 
-		$compression = $this->detect_compression_method();
+		$compression = WBoard_Connector_Backup_Files::detect_compression_method();
 
 		return new WP_REST_Response(
 			array(
@@ -394,30 +395,6 @@ class WBoard_Connector_Backup {
 		}
 
 		return '0.0.0.0';
-	}
-
-	/**
-	 * Detecte la meilleure methode de compression disponible.
-	 *
-	 * Ordre de preference :
-	 * 1. ZipArchive (extension PHP native)
-	 * 2. PclZip (bundle WordPress)
-	 * 3. tar_gz (PHP pur, dernier recours)
-	 *
-	 * @return string Le nom de la methode.
-	 */
-	public function detect_compression_method() {
-		if ( class_exists( 'ZipArchive' ) ) {
-			return 'ziparchive';
-		}
-
-		// PclZip est toujours present dans WordPress.
-		$pclzip_path = ABSPATH . 'wp-admin/includes/class-pclzip.php';
-		if ( file_exists( $pclzip_path ) ) {
-			return 'pclzip';
-		}
-
-		return 'tar_gz';
 	}
 
 	/**
