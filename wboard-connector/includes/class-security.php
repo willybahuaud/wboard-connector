@@ -276,12 +276,64 @@ class WBoard_Connector_Security {
 			return $timestamp_check;
 		}
 
-		$signature_check = $this->verify_signature( $request, $signature, (int) $timestamp );
+		// Signature v2 (body brut) ou v1 (decode+re-encode) selon le header.
+		$sig_version = $request->get_header( 'X-WBoard-Signature-Version' );
+
+		if ( '2' === $sig_version ) {
+			$signature_check = $this->verify_signature_v2( $request, $signature, (int) $timestamp );
+		} else {
+			$signature_check = $this->verify_signature( $request, $signature, (int) $timestamp );
+		}
+
 		if ( is_wp_error( $signature_check ) ) {
 			return $signature_check;
 		}
 
 		$this->update_last_request_time();
+
+		return true;
+	}
+
+	/**
+	 * Verifie la signature HMAC v2 (body brut, sans decode+re-encode).
+	 *
+	 * Le payload est construit par concatenation directe :
+	 * {"timestamp":123456,"data":<body_brut>}
+	 *
+	 * Elimine les problemes de serialisation (ordre des cles,
+	 * {} vs [], echappement des slashes).
+	 *
+	 * @param WP_REST_Request $request   La requete REST.
+	 * @param string          $signature La signature recue.
+	 * @param int             $timestamp Le timestamp de la requete.
+	 *
+	 * @return bool|WP_Error True si valide, WP_Error sinon.
+	 */
+	private function verify_signature_v2( WP_REST_Request $request, $signature, $timestamp ) {
+		$secret_key = $this->get_secret_key();
+
+		if ( empty( $secret_key ) ) {
+			return new WP_Error(
+				'wboard_no_secret_key',
+				__( 'Clé secrète non configurée.', 'wboard-connector' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		// Le body est utilise tel quel, sans decode+re-encode.
+		$body = $request->get_body();
+		$data = ! empty( $body ) ? $body : '[]';
+
+		$payload            = '{"timestamp":' . $timestamp . ',"data":' . $data . '}';
+		$expected_signature = 'sha256=' . hash_hmac( 'sha256', $payload, $secret_key );
+
+		if ( ! hash_equals( $expected_signature, $signature ) ) {
+			return new WP_Error(
+				'wboard_invalid_signature',
+				__( 'Signature invalide.', 'wboard-connector' ),
+				array( 'status' => 401 )
+			);
+		}
 
 		return true;
 	}

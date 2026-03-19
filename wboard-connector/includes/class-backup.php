@@ -110,13 +110,15 @@ class WBoard_Connector_Backup {
 			)
 		);
 
-		// POST /wboard/v1/backup/files — Cree un ZIP et l'uploade.
+		// POST /wboard/v1/backup/stream — Stream les fichiers en tar brut.
+		// Le backup-manager recoit le tar directement dans la reponse HTTP.
+		// Pas de ZIP, pas de fichier temporaire, pas d'upload : juste readfile().
 		register_rest_route(
 			self::API_NAMESPACE,
-			'/backup/files',
+			'/backup/stream',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'handle_files' ),
+				'callback'            => array( $this, 'handle_stream' ),
 				'permission_callback' => array( $this, 'check_backup_permission' ),
 			)
 		);
@@ -204,21 +206,16 @@ class WBoard_Connector_Backup {
 	}
 
 	/**
-	 * Delegue la creation de ZIP au module Files.
+	 * Delegue le streaming tar au module Streamer.
 	 *
 	 * @param WP_REST_Request $request La requete REST.
 	 *
-	 * @return WP_REST_Response|WP_Error
+	 * @return WP_REST_Response|WP_Error|void
 	 */
-	public function handle_files( WP_REST_Request $request ) {
-		$files = new WBoard_Connector_Backup_Files();
+	public function handle_stream( WP_REST_Request $request ) {
+		$streamer = new WBoard_Connector_Backup_Streamer();
 
-		return $files->handle(
-			$request,
-			$this->config,
-			$this->get_site_id(),
-			$this->security->get_secret_key()
-		);
+		return $streamer->handle( $request, $this->config );
 	}
 
 	/**
