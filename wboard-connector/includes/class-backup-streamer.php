@@ -33,7 +33,7 @@ class WBoard_Connector_Backup_Streamer {
 	 *
 	 * @var int
 	 */
-	const MAX_FILES_PER_REQUEST = 1000;
+	const MAX_FILES_PER_REQUEST = 50000;
 
 	/**
 	 * Gere la requete de streaming tar.
@@ -247,7 +247,6 @@ class WBoard_Connector_Backup_Streamer {
 	/**
 	 * Valide les chemins de fichiers.
 	 *
-	 * Identique a WBoard_Connector_Backup_Files::validate_file_paths().
 	 * Les fichiers sont relatifs a wp-content/.
 	 *
 	 * @param array $files Liste des chemins relatifs.

@@ -123,6 +123,18 @@ class WBoard_Connector_Backup {
 			)
 		);
 
+		// POST /wboard/v1/backup/db/stream — Stream toutes les tables en tar brut.
+		// Une seule requete HTTP pour toutes les tables, zero rate limiting.
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/backup/db/stream',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_db_stream' ),
+				'permission_callback' => array( $this, 'check_backup_permission' ),
+			)
+		);
+
 		// POST /wboard/v1/backup/db/tables — Liste les tables + empreintes.
 		register_rest_route(
 			self::API_NAMESPACE,
@@ -232,6 +244,19 @@ class WBoard_Connector_Backup {
 	}
 
 	/**
+	 * Delegue le streaming tar DB au module DB.
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 *
+	 * @return WP_REST_Response|WP_Error|void
+	 */
+	public function handle_db_stream( WP_REST_Request $request ) {
+		$db = new WBoard_Connector_Backup_Db();
+
+		return $db->handle_stream_export( $request, $this->config );
+	}
+
+	/**
 	 * Delegue l'export SQL au module DB.
 	 *
 	 * @param WP_REST_Request $request La requete REST.
@@ -261,7 +286,7 @@ class WBoard_Connector_Backup {
 			? @disk_free_space( WP_CONTENT_DIR )
 			: null;
 
-		$compression = WBoard_Connector_Backup_Files::detect_compression_method();
+		$compression = self::detect_compression_method();
 
 		return new WP_REST_Response(
 			array(
@@ -381,5 +406,27 @@ class WBoard_Connector_Backup {
 		// on activera cette verification ici.
 		// Pour l'instant, les niveaux 1 (IP) + 2 (HMAC) suffisent.
 		return true;
+	}
+
+	/**
+	 * Detecte la meilleure methode de compression disponible.
+	 *
+	 * @return string Le nom de la methode ('ziparchive', 'pclzip', 'tar_gz', 'none').
+	 */
+	public static function detect_compression_method() {
+		if ( class_exists( 'ZipArchive' ) ) {
+			return 'ziparchive';
+		}
+
+		$pclzip_path = ABSPATH . 'wp-admin/includes/class-pclzip.php';
+		if ( file_exists( $pclzip_path ) ) {
+			return 'pclzip';
+		}
+
+		if ( function_exists( 'gzopen' ) ) {
+			return 'tar_gz';
+		}
+
+		return 'none';
 	}
 }
