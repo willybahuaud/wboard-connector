@@ -68,12 +68,16 @@ function wboard_connector_init() {
 	$test_session = new WBoard_Connector_Test_Session();
 	$updater      = new WBoard_Connector_Updater();
 
+	// Module backup (isole, charge ses routes uniquement si active).
+	$backup = new WBoard_Connector_Backup( $security );
+
 	// Enregistre les hooks.
 	$api->register_hooks();
 	$settings->register_hooks();
 	$autologin->register_hooks();
 	$test_session->register_hooks();
 	$updater->register_hooks();
+	$backup->register_hooks();
 }
 add_action( 'plugins_loaded', 'wboard_connector_init' );
 
