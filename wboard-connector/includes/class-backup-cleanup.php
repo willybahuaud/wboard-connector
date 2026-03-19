@@ -63,27 +63,58 @@ class WBoard_Connector_Backup_Cleanup {
 	}
 
 	/**
+	 * Fichiers de protection a ne pas supprimer.
+	 *
+	 * @var array
+	 */
+	private static $protected_files = array( 'index.php', '.htaccess', 'nginx.conf' );
+
+	/**
 	 * Execute le nettoyage.
 	 *
 	 * Supprime les fichiers de plus de MAX_FILE_AGE secondes
-	 * dans le repertoire temporaire.
+	 * dans les deux emplacements possibles (sys_temp + wp-content fallback).
 	 *
 	 * @return array{deleted: int, errors: int} Compteurs.
 	 */
 	public static function run() {
-		$temp_dir = WP_CONTENT_DIR . '/' . self::TEMP_DIR;
+		$deleted = 0;
+		$errors  = 0;
 
-		if ( ! is_dir( $temp_dir ) ) {
-			return array(
-				'deleted' => 0,
-				'errors'  => 0,
-			);
+		// Nettoie les deux emplacements (l'ancien wp-content + le nouveau sys_temp).
+		$dirs = array(
+			WP_CONTENT_DIR . '/' . self::TEMP_DIR,
+			sys_get_temp_dir() . '/wboard-backup',
+		);
+
+		foreach ( $dirs as $temp_dir ) {
+			if ( ! is_dir( $temp_dir ) ) {
+				continue;
+			}
+
+			$result  = self::clean_directory( $temp_dir );
+			$deleted += $result['deleted'];
+			$errors  += $result['errors'];
 		}
 
+		return array(
+			'deleted' => $deleted,
+			'errors'  => $errors,
+		);
+	}
+
+	/**
+	 * Nettoie un repertoire de ses fichiers temporaires ages.
+	 *
+	 * @param string $dir Chemin du repertoire.
+	 *
+	 * @return array{deleted: int, errors: int} Compteurs.
+	 */
+	private static function clean_directory( $dir ) {
 		$deleted  = 0;
 		$errors   = 0;
 		$now      = time();
-		$iterator = new DirectoryIterator( $temp_dir );
+		$iterator = new DirectoryIterator( $dir );
 
 		foreach ( $iterator as $file ) {
 			if ( $file->isDot() ) {
@@ -93,7 +124,7 @@ class WBoard_Connector_Backup_Cleanup {
 			$filename = $file->getFilename();
 
 			// Preserve les fichiers de protection.
-			if ( 'index.php' === $filename || '.htaccess' === $filename ) {
+			if ( in_array( $filename, self::$protected_files, true ) ) {
 				continue;
 			}
 
@@ -105,7 +136,7 @@ class WBoard_Connector_Backup_Cleanup {
 
 			// Supprime.
 			if ( $file->isFile() ) {
-				$result = wp_delete_file( $file->getPathname() );
+				wp_delete_file( $file->getPathname() );
 				if ( file_exists( $file->getPathname() ) ) {
 					$errors++;
 				} else {

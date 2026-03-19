@@ -77,9 +77,24 @@ class WBoard_Connector_Security {
 	const HEADER_SITE_ID = 'X-WBoard-Site-ID';
 
 	/**
+	 * Nom du header contenant le nonce anti-rejeu.
+	 *
+	 * @var string
+	 */
+	const HEADER_NONCE = 'X-WBoard-Nonce';
+
+	/**
+	 * Prefixe du transient de stockage des nonces.
+	 *
+	 * @var string
+	 */
+	const NONCE_TRANSIENT_PREFIX = 'wboard_nonce_';
+
+	/**
 	 * Vérifie si une requête est authentique.
 	 *
-	 * Contrôle le rate limiting, la signature HMAC et la validité du timestamp.
+	 * Contrôle le rate limiting, la signature HMAC (v1 ou v2),
+	 * la validité du timestamp et le nonce anti-rejeu.
 	 *
 	 * @param WP_REST_Request $request La requête REST à vérifier.
 	 *
@@ -92,28 +107,9 @@ class WBoard_Connector_Security {
 			return $rate_limit_check;
 		}
 
-		$timestamp = $request->get_header( 'X-WBoard-Timestamp' );
-		$signature = $request->get_header( 'X-WBoard-Signature' );
-
-		// Vérifie la présence des headers requis.
-		if ( empty( $timestamp ) || empty( $signature ) ) {
-			return new WP_Error(
-				'wboard_missing_headers',
-				__( 'Headers de sécurité manquants.', 'wboard-connector' ),
-				array( 'status' => 401 )
-			);
-		}
-
-		// Vérifie la validité du timestamp.
-		$timestamp_check = $this->verify_timestamp( (int) $timestamp );
-		if ( is_wp_error( $timestamp_check ) ) {
-			return $timestamp_check;
-		}
-
-		// Vérifie la signature HMAC.
-		$signature_check = $this->verify_signature( $request, $signature, (int) $timestamp );
-		if ( is_wp_error( $signature_check ) ) {
-			return $signature_check;
+		$result = $this->verify_signature_dispatch( $request );
+		if ( is_wp_error( $result ) ) {
+			return $result;
 		}
 
 		// Met à jour la date de dernière requête reçue.
@@ -260,6 +256,24 @@ class WBoard_Connector_Security {
 	 * @return bool|WP_Error True si valide, WP_Error sinon.
 	 */
 	public function verify_request_no_ratelimit( WP_REST_Request $request ) {
+		$result = $this->verify_signature_dispatch( $request );
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		$this->update_last_request_time();
+
+		return true;
+	}
+
+	/**
+	 * Logique commune de verification : headers, timestamp, signature v1/v2, nonce.
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 *
+	 * @return bool|WP_Error True si valide, WP_Error sinon.
+	 */
+	private function verify_signature_dispatch( WP_REST_Request $request ) {
 		$timestamp = $request->get_header( 'X-WBoard-Timestamp' );
 		$signature = $request->get_header( 'X-WBoard-Signature' );
 
@@ -289,7 +303,57 @@ class WBoard_Connector_Security {
 			return $signature_check;
 		}
 
-		$this->update_last_request_time();
+		// Anti-rejeu : verifie le nonce si present.
+		// Optionnel pour la retrocompatibilite (les anciens appelants n'envoient pas de nonce).
+		$nonce_check = $this->verify_nonce( $request );
+		if ( is_wp_error( $nonce_check ) ) {
+			return $nonce_check;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Verifie le nonce anti-rejeu.
+	 *
+	 * Si le header X-WBoard-Nonce est present, on verifie que ce nonce
+	 * n'a pas deja ete utilise (stocke en transient pour TIMESTAMP_TOLERANCE secondes).
+	 * Si le header est absent, on laisse passer (retrocompatibilite).
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 *
+	 * @return bool|WP_Error True si OK, WP_Error si nonce deja utilise.
+	 */
+	private function verify_nonce( WP_REST_Request $request ) {
+		$nonce = $request->get_header( 'X-WBoard-Nonce' );
+
+		// Pas de nonce = ancien appelant, on laisse passer.
+		if ( empty( $nonce ) ) {
+			return true;
+		}
+
+		// Validation format : hex, 32 chars.
+		if ( ! preg_match( '/^[a-f0-9]{32}$/', $nonce ) ) {
+			return new WP_Error(
+				'wboard_invalid_nonce',
+				__( 'Nonce invalide.', 'wboard-connector' ),
+				array( 'status' => 401 )
+			);
+		}
+
+		$transient_key = self::NONCE_TRANSIENT_PREFIX . $nonce;
+
+		// Si le transient existe, le nonce a deja ete utilise.
+		if ( false !== get_transient( $transient_key ) ) {
+			return new WP_Error(
+				'wboard_nonce_reused',
+				__( 'Requete rejouee (nonce deja utilise).', 'wboard-connector' ),
+				array( 'status' => 401 )
+			);
+		}
+
+		// Stocke le nonce pour la duree de la fenetre de timestamp.
+		set_transient( $transient_key, 1, self::TIMESTAMP_TOLERANCE );
 
 		return true;
 	}

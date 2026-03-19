@@ -650,11 +650,37 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
-	 * Assure que le repertoire temporaire existe et est protege.
+	 * Assure que le repertoire temporaire existe.
+	 *
+	 * Utilise sys_get_temp_dir() pour placer les fichiers hors du webroot
+	 * (protection contre l'acces direct, quel que soit le serveur web).
+	 * Fallback sur WP_CONTENT_DIR/wboard-tmp si sys_get_temp_dir() echoue.
 	 *
 	 * @return string|WP_Error Le chemin du repertoire temporaire.
 	 */
 	public static function ensure_temp_dir() {
+		// Priorite : hors webroot (securite Nginx/Apache/LiteSpeed).
+		$sys_temp = sys_get_temp_dir() . '/wboard-backup';
+
+		if ( ! file_exists( $sys_temp ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_mkdir
+			@mkdir( $sys_temp, 0700, true );
+		}
+
+		if ( is_dir( $sys_temp ) && is_writable( $sys_temp ) ) {
+			return $sys_temp;
+		}
+
+		// Fallback : wp-content/wboard-tmp avec protections web.
+		return self::ensure_temp_dir_fallback();
+	}
+
+	/**
+	 * Fallback : cree le repertoire temporaire dans wp-content avec protections.
+	 *
+	 * @return string|WP_Error Le chemin du repertoire temporaire.
+	 */
+	private static function ensure_temp_dir_fallback() {
 		$temp_dir = WP_CONTENT_DIR . '/' . self::TEMP_DIR;
 
 		if ( ! file_exists( $temp_dir ) ) {
@@ -668,17 +694,25 @@ class WBoard_Connector_Backup_Db {
 			}
 		}
 
-		// Fichiers de protection contre l'acces direct.
-		$index_path = $temp_dir . '/index.php';
-		if ( ! file_exists( $index_path ) ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-			file_put_contents( $index_path, '<?php // Silence is golden.' );
-		}
-
+		// Protection Apache.
 		$htaccess_path = $temp_dir . '/.htaccess';
 		if ( ! file_exists( $htaccess_path ) ) {
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
 			file_put_contents( $htaccess_path, 'deny from all' );
+		}
+
+		// Protection Nginx (hint : si Nginx est configure avec include).
+		$nginx_path = $temp_dir . '/nginx.conf';
+		if ( ! file_exists( $nginx_path ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			file_put_contents( $nginx_path, "location ~* /wboard-tmp/ {\n\tdeny all;\n\treturn 403;\n}" );
+		}
+
+		// Index PHP silencieux.
+		$index_path = $temp_dir . '/index.php';
+		if ( ! file_exists( $index_path ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+			file_put_contents( $index_path, '<?php // Silence is golden.' );
 		}
 
 		if ( ! is_writable( $temp_dir ) ) {
