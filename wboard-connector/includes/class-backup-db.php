@@ -178,9 +178,13 @@ class WBoard_Connector_Backup_Db {
 				continue;
 			}
 
+			// Securite : on ignore le primary_key du body HTTP (risque SQLi).
+			// On le deduit cote serveur via INFORMATION_SCHEMA.
+			$server_pk = $this->get_primary_key( $name );
+
 			$validated[] = array(
 				'name'        => $name,
-				'primary_key' => isset( $table_info['primary_key'] ) ? $table_info['primary_key'] : null,
+				'primary_key' => $server_pk,
 				'batch_size'  => isset( $table_info['batch_size'] ) ? (int) $table_info['batch_size'] : self::DEFAULT_BATCH_SIZE,
 			);
 		}
@@ -414,143 +418,6 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
-	 * Gere la requete d'export SQL d'une table.
-	 *
-	 * Body attendu :
-	 * {
-	 *   "table": "wp_posts",
-	 *   "cursor": 0,
-	 *   "batch_size": 2000,
-	 *   "upload_url": "https://backup-1.wabeo.work/ingest/db",
-	 *   "upload_token": "tok_abc123"
-	 * }
-	 *
-	 * @param WP_REST_Request $request     La requete REST.
-	 * @param array           $config      La config backup.
-	 * @param string          $site_id     Identifiant du site.
-	 * @param string          $hmac_secret Secret HMAC du site.
-	 *
-	 * @return WP_REST_Response|WP_Error
-	 */
-	public function handle_export( WP_REST_Request $request, array $config, $site_id, $hmac_secret ) {
-		global $wpdb;
-
-		$body         = json_decode( $request->get_body(), true );
-		$table        = isset( $body['table'] ) ? $body['table'] : '';
-		$cursor       = isset( $body['cursor'] ) ? (int) $body['cursor'] : 0;
-		$batch_size   = isset( $body['batch_size'] ) ? (int) $body['batch_size'] : self::DEFAULT_BATCH_SIZE;
-		$upload_url   = isset( $body['upload_url'] ) ? $body['upload_url'] : '';
-		$upload_token = isset( $body['upload_token'] ) ? $body['upload_token'] : '';
-
-		// Validation.
-		if ( empty( $table ) ) {
-			return new WP_Error(
-				'wboard_backup_db_no_table',
-				__( 'Nom de table requis.', 'wboard-connector' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		// Securite : la table doit commencer par le prefixe WP.
-		if ( strpos( $table, $wpdb->prefix ) !== 0 ) {
-			return new WP_Error(
-				'wboard_backup_db_invalid_table',
-				__( 'Table non autorisee (prefixe incorrect).', 'wboard-connector' ),
-				array( 'status' => 403 )
-			);
-		}
-
-		// Securite : le nom de table ne doit contenir que des caracteres valides.
-		if ( ! preg_match( '/^[a-zA-Z0-9_]+$/', $table ) ) {
-			return new WP_Error(
-				'wboard_backup_db_invalid_table_name',
-				__( 'Nom de table invalide.', 'wboard-connector' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		// Verifie que la table existe.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$table_exists = $wpdb->get_var(
-			$wpdb->prepare(
-				'SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s',
-				DB_NAME,
-				$table
-			)
-		);
-
-		if ( ! $table_exists ) {
-			return new WP_Error(
-				'wboard_backup_db_table_not_found',
-				sprintf( 'Table %s introuvable.', $table ),
-				array( 'status' => 404 )
-			);
-		}
-
-		if ( empty( $upload_url ) || empty( $upload_token ) ) {
-			return new WP_Error(
-				'wboard_backup_db_missing_upload',
-				__( 'upload_url et upload_token requis.', 'wboard-connector' ),
-				array( 'status' => 400 )
-			);
-		}
-
-		// Adapte la taille de batch a la memoire disponible.
-		$batch_size = $this->adapt_batch_size( $batch_size );
-
-		// Detection de la cle primaire.
-		$primary_key = $this->get_primary_key( $table );
-
-		// Export SQL.
-		$start  = time();
-		$result = $this->export_table( $table, $primary_key, $cursor, $batch_size );
-
-		if ( is_wp_error( $result ) ) {
-			return $result;
-		}
-
-		// Upload vers le backup-manager.
-		$uploader    = new WBoard_Connector_Backup_Uploader();
-		$manager_url = isset( $config['manager_url'] ) ? $config['manager_url'] : '';
-
-		$upload_result = $uploader->upload(
-			$result['file_path'],
-			$upload_url,
-			$upload_token,
-			$site_id,
-			$hmac_secret,
-			$manager_url
-		);
-
-		// Nettoyage du fichier temporaire.
-		$file_size = file_exists( $result['file_path'] ) ? filesize( $result['file_path'] ) : 0;
-		if ( file_exists( $result['file_path'] ) ) {
-			wp_delete_file( $result['file_path'] );
-		}
-
-		if ( ! $upload_result['success'] ) {
-			return new WP_Error(
-				'wboard_backup_db_upload_failed',
-				$upload_result['error'],
-				array( 'status' => 502 )
-			);
-		}
-
-		return new WP_REST_Response(
-			array(
-				'table'         => $table,
-				'last_id'       => $result['last_id'],
-				'complete'      => $result['complete'],
-				'rows_exported' => $result['rows_exported'],
-				'file_size'     => $file_size,
-				'has_pk'        => ! empty( $primary_key ),
-				'duration'      => time() - $start,
-			),
-			200
-		);
-	}
-
-	/**
 	 * Recupere les infos des tables via INFORMATION_SCHEMA.
 	 *
 	 * @return array Liste des tables avec metadata.
@@ -691,106 +558,6 @@ class WBoard_Connector_Backup_Db {
 		$batch = min( $batch, self::MAX_BATCH_SIZE );
 
 		return $batch;
-	}
-
-	/**
-	 * Exporte les lignes d'une table en fichier SQL.
-	 *
-	 * Precondition : $table a ete valide par regex /^[a-zA-Z0-9_]+$/ dans handle_export().
-	 *
-	 * @param string      $table       Nom de la table.
-	 * @param string|null $primary_key Nom de la colonne PK (null si pas de PK).
-	 * @param int         $cursor      Valeur du curseur (dernier ID exporte).
-	 * @param int         $batch_size  Nombre de lignes a exporter.
-	 *
-	 * @return array{file_path: string, last_id: int, complete: bool, rows_exported: int}|WP_Error
-	 */
-	private function export_table( $table, $primary_key, $cursor, $batch_size ) {
-		global $wpdb;
-
-		// Reutilise le temp dir securise (avec index.php et .htaccess).
-		$temp_dir = self::ensure_temp_dir();
-		if ( is_wp_error( $temp_dir ) ) {
-			return $temp_dir;
-		}
-
-		// Nom de fichier imprevisible (anti-acces direct + anti-concurrence).
-		$file_id   = wp_generate_password( 8, false, false );
-		$file_path = $temp_dir . '/export-' . $file_id . '.sql';
-		$handle    = fopen( $file_path, 'w' );
-
-		if ( false === $handle ) {
-			return new WP_Error(
-				'wboard_backup_db_file_create_failed',
-				__( 'Impossible de creer le fichier SQL temporaire.', 'wboard-connector' ),
-				array( 'status' => 500 )
-			);
-		}
-
-		// Header SQL si premier batch (cursor = 0).
-		if ( 0 === $cursor ) {
-			$create_table = $this->get_create_table_statement( $table );
-			if ( $create_table ) {
-				fwrite( $handle, "-- Table: {$table}\n" );
-				fwrite( $handle, "DROP TABLE IF EXISTS `{$table}`;\n" );
-				fwrite( $handle, $create_table . ";\n\n" );
-			}
-		}
-
-		// Requete avec curseur PK ou fallback OFFSET.
-		if ( ! empty( $primary_key ) ) {
-			$rows = $this->fetch_rows_by_pk( $table, $primary_key, $cursor, $batch_size );
-		} else {
-			$rows = $this->fetch_rows_by_offset( $table, $cursor, $batch_size );
-		}
-
-		$rows_exported = 0;
-		$last_id       = $cursor;
-
-		if ( ! empty( $rows ) ) {
-			$columns         = array_keys( (array) $rows[0] );
-			$columns_escaped = array_map( array( $this, 'escape_column_name' ), $columns );
-			$columns_str     = implode( ', ', $columns_escaped );
-
-			foreach ( $rows as $row ) {
-				$row = (array) $row;
-
-				$values = array();
-				foreach ( $row as $value ) {
-					if ( null === $value ) {
-						$values[] = 'NULL';
-					} else {
-						// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-						$values[] = "'" . $wpdb->_real_escape( $value ) . "'";
-					}
-				}
-
-				$sql_line = "INSERT INTO `{$table}` ({$columns_str}) VALUES (" . implode( ', ', $values ) . ");\n";
-				fwrite( $handle, $sql_line );
-
-				$rows_exported++;
-
-				if ( ! empty( $primary_key ) && isset( $row[ $primary_key ] ) ) {
-					$last_id = (int) $row[ $primary_key ];
-				}
-			}
-		}
-
-		fclose( $handle );
-
-		// Si pas de PK, le curseur est l'offset.
-		if ( empty( $primary_key ) ) {
-			$last_id = $cursor + $rows_exported;
-		}
-
-		$is_complete = ( count( $rows ) < $batch_size );
-
-		return array(
-			'file_path'     => $file_path,
-			'last_id'       => $last_id,
-			'complete'      => $is_complete,
-			'rows_exported' => $rows_exported,
-		);
 	}
 
 	/**

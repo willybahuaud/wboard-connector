@@ -146,17 +146,6 @@ class WBoard_Connector_Backup {
 			)
 		);
 
-		// POST /wboard/v1/backup/db/export — Exporte une table (cursor-based).
-		register_rest_route(
-			self::API_NAMESPACE,
-			'/backup/db/export',
-			array(
-				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'handle_db_export' ),
-				'permission_callback' => array( $this, 'check_backup_permission' ),
-			)
-		);
-
 		// GET /wboard/v1/backup/status — Statut du module backup.
 		register_rest_route(
 			self::API_NAMESPACE,
@@ -254,24 +243,6 @@ class WBoard_Connector_Backup {
 		$db = new WBoard_Connector_Backup_Db();
 
 		return $db->handle_stream_export( $request, $this->config );
-	}
-
-	/**
-	 * Delegue l'export SQL au module DB.
-	 *
-	 * @param WP_REST_Request $request La requete REST.
-	 *
-	 * @return WP_REST_Response|WP_Error
-	 */
-	public function handle_db_export( WP_REST_Request $request ) {
-		$db = new WBoard_Connector_Backup_Db();
-
-		return $db->handle_export(
-			$request,
-			$this->config,
-			$this->get_site_id(),
-			$this->security->get_secret_key()
-		);
 	}
 
 	/**
