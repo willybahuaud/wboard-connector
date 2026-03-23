@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 1.6.2
+Stable tag: 2.0.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -25,10 +25,12 @@ WBoard Connector est un plugin compagnon pour WBoard, un outil de gestion de par
 * **Support WordPress Multisite** : détection réseau, niveau d'activation des plugins
 * Détection WP_DEBUG actif (alerte sur sites de production)
 * Mise à jour des plugins et thèmes à distance depuis le board
+* **Backup streaming** : export fichiers et base de données piloté par le backup-manager
+* **Sessions de test** : sessions courte durée pour tests visuels (BackstopJS/Playwright)
 
 **Sécurité :**
 
-Toutes les communications entre le board et ce plugin sont sécurisées par signature HMAC-SHA256. Chaque requête est vérifiée pour garantir son authenticité et son intégrité.
+Toutes les communications entre le board et ce plugin sont sécurisées par signature HMAC-SHA256 (v2 : signature sur payload brut + nonce anti-rejeu). Chaque requête est vérifiée pour garantir son authenticité et son intégrité.
 
 == Installation ==
 
@@ -57,6 +59,17 @@ Vivid Backup Pro et WPVivid Backup sont actuellement supportés.
 SecuPress Pro est actuellement supporté pour la collecte des alertes de sécurité.
 
 == Changelog ==
+
+= 2.0.0 =
+* **Backup streaming** : module complet d'export fichiers (tar) et base de données (SQL gzippé) piloté par le backup-manager
+* Scanner de fichiers wp-content avec gestion symlinks, exclusions et état incrémental
+* Cron de nettoyage automatique des fichiers temporaires de backup
+* **Signature HMAC v2** : vérification sur le payload brut (plus de decode/re-encode), rétrocompatible v1
+* **Nonce anti-rejeu** : chaque requête porte un nonce unique (transient 5 min), optionnel pour rétrocompatibilité
+* Fix SQLi : primary_key déduit côté serveur via INFORMATION_SCHEMA
+* Répertoire temporaire déplacé hors webroot (sys_get_temp_dir), fallback sécurisé dans wp-content
+* Suppression du code mort (class-backup-uploader, ancienne route /backup/db/export)
+* Sessions de test courte durée pour tests visuels BackstopJS/Playwright (endpoints /test-session et /destroy-sessions)
 
 = 1.6.2 =
 * Fix sécurité : rate limiting basé sur REMOTE_ADDR (non spoofable)
@@ -108,6 +121,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 2.0.0 =
+Mise à jour majeure : module backup streaming, signature HMAC v2 avec nonce anti-rejeu, correctifs de sécurité. Rétrocompatible avec le board existant.
 
 = 1.6.2 =
 Renforcement rate limiting et validation des slugs de MAJ.
