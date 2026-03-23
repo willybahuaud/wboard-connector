@@ -3,7 +3,7 @@
  * Plugin Name: WBoard Connector
  * Plugin URI: https://github.com/wboard/connector
  * Description: Connecteur pour WBoard - Permet la supervision centralisée du site WordPress.
- * Version: 1.7.0
+ * Version: 2.0.0
  * Requires at least: 6.0
  * Requires PHP: 7.3
  * Author: Willy bahuaud
@@ -22,7 +22,7 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Constantes du plugin.
  */
-define( 'WBOARD_CONNECTOR_VERSION', '1.7.0' );
+define( 'WBOARD_CONNECTOR_VERSION', '2.0.0' );
 define( 'WBOARD_CONNECTOR_FILE', __FILE__ );
 define( 'WBOARD_CONNECTOR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WBOARD_CONNECTOR_URL', plugin_dir_url( __FILE__ ) );
@@ -68,12 +68,16 @@ function wboard_connector_init() {
 	$test_session = new WBoard_Connector_Test_Session();
 	$updater      = new WBoard_Connector_Updater();
 
+	// Module backup (isole, charge ses routes uniquement si active).
+	$backup = new WBoard_Connector_Backup( $security );
+
 	// Enregistre les hooks.
 	$api->register_hooks();
 	$settings->register_hooks();
 	$autologin->register_hooks();
 	$test_session->register_hooks();
 	$updater->register_hooks();
+	$backup->register_hooks();
 }
 add_action( 'plugins_loaded', 'wboard_connector_init' );
 
@@ -110,6 +114,9 @@ register_activation_hook( __FILE__, 'wboard_connector_activate' );
 function wboard_connector_deactivate() {
 	// Supprime les transients liés au plugin.
 	delete_transient( 'wboard_connector_last_request' );
+
+	// Desinscrit le cron de nettoyage backup.
+	WBoard_Connector_Backup_Cleanup::unschedule();
 }
 register_deactivation_hook( __FILE__, 'wboard_connector_deactivate' );
 
