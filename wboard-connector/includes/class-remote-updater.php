@@ -116,10 +116,17 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		// Reactiver le plugin si il etait actif avant la MAJ.
-		// Plugin_Upgrader desactive le plugin pendant l'upgrade et tente
-		// de le reactiver, mais ca peut echouer silencieusement.
-		if ( $was_active && ! is_plugin_active( $plugin_file ) ) {
-			activate_plugin( $plugin_file, '', $was_network_active, true );
+		// Pour les self-updates, toujours forcer la reactivation :
+		// Plugin_Upgrader remplace les fichiers du plugin en cours d'execution
+		// et activate_plugin() peut echouer silencieusement.
+		$is_self_update = ( 'wboard-connector' === $slug );
+
+		if ( $was_active ) {
+			wp_cache_delete( 'plugins', 'plugins' );
+
+			if ( $is_self_update || ! is_plugin_active( $plugin_file ) ) {
+				$this->force_activate_plugin( $plugin_file, $was_network_active );
+			}
 		}
 
 		// Succes : cleanup backup temp.
@@ -439,6 +446,55 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		return ! $this->is_directory_empty( $path );
+	}
+
+	/**
+	 * Force l'activation d'un plugin avec fallback direct.
+	 *
+	 * Tente activate_plugin() en mode silencieux. Si ca echoue
+	 * (WP_Error ou plugin toujours inactif), injecte directement
+	 * le plugin dans l'option active_plugins. Cela garantit la
+	 * reactivation meme si la validation WP bloque (fichier non
+	 * encore totalement ecrit, erreur d'inclusion, etc.).
+	 *
+	 * Utilise principalement pour les self-updates ou Plugin_Upgrader
+	 * remplace les fichiers du plugin en cours d'execution.
+	 *
+	 * @param string $plugin_file  Le plugin file (ex: wboard-connector/wboard-connector.php).
+	 * @param bool   $network_wide Activation reseau (multisite).
+	 *
+	 * @return void
+	 */
+	private function force_activate_plugin( $plugin_file, $network_wide = false ) {
+		// Tentative standard (silencieuse, sans déclencher les hooks d'activation).
+		$result = activate_plugin( $plugin_file, '', $network_wide, true );
+
+		// Verification : le plugin est-il maintenant actif ?
+		wp_cache_delete( 'plugins', 'plugins' );
+
+		if ( ! is_wp_error( $result ) && is_plugin_active( $plugin_file ) ) {
+			return;
+		}
+
+		// Fallback : injection directe dans l'option active_plugins.
+		// C'est ce que activate_plugin() fait en interne, sans la
+		// validation par inclusion du fichier qui peut echouer.
+		if ( $network_wide && is_multisite() ) {
+			$active = get_site_option( 'active_sitewide_plugins', array() );
+
+			if ( ! isset( $active[ $plugin_file ] ) ) {
+				$active[ $plugin_file ] = time();
+				update_site_option( 'active_sitewide_plugins', $active );
+			}
+		} else {
+			$active = get_option( 'active_plugins', array() );
+
+			if ( ! in_array( $plugin_file, $active, true ) ) {
+				$active[] = $plugin_file;
+				sort( $active );
+				update_option( 'active_plugins', $active );
+			}
+		}
 	}
 
 	/**
