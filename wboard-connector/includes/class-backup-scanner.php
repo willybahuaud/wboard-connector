@@ -246,6 +246,10 @@ class WBoard_Connector_Backup_Scanner {
 	/**
 	 * Verifie si un chemin relatif est dans un repertoire exclu.
 	 *
+	 * Supporte deux modes :
+	 * - Nom exact : "updraft" exclut tout repertoire nomme exactement "updraft"
+	 * - Glob avec * : "*cache*" exclut tout repertoire dont le nom contient "cache"
+	 *
 	 * @param string $relative_path Le chemin relatif depuis wp-content/.
 	 * @param array  $excluded_dirs Les repertoires exclus.
 	 *
@@ -253,11 +257,44 @@ class WBoard_Connector_Backup_Scanner {
 	 */
 	private function is_dir_excluded( $relative_path, array $excluded_dirs ) {
 		foreach ( $excluded_dirs as $excluded ) {
-			// Match exact du premier segment ou du chemin complet.
-			if ( strpos( $relative_path, $excluded . '/' ) === 0 ) {
-				return true;
+			if ( strpos( $excluded, '*' ) !== false ) {
+				// Mode glob : on teste chaque segment du chemin.
+				if ( $this->matches_glob_segment( $relative_path, $excluded ) ) {
+					return true;
+				}
+			} else {
+				// Mode exact : match du segment complet.
+				if ( strpos( $relative_path, $excluded . '/' ) === 0 ) {
+					return true;
+				}
+				if ( strpos( $relative_path, '/' . $excluded . '/' ) !== false ) {
+					return true;
+				}
 			}
-			if ( strpos( $relative_path, '/' . $excluded . '/' ) !== false ) {
+		}
+
+		return false;
+	}
+
+	/**
+	 * Teste si un segment du chemin matche un pattern glob.
+	 *
+	 * Decoupe le chemin en segments (repertoires) et teste chacun
+	 * avec fnmatch. Ex: "*cache*" matchera "object-cache" ou "et-cache".
+	 *
+	 * @param string $relative_path Le chemin relatif.
+	 * @param string $pattern       Le pattern glob (ex: "*cache*").
+	 *
+	 * @return bool True si un segment matche.
+	 */
+	private function matches_glob_segment( $relative_path, $pattern ) {
+		$segments = explode( '/', $relative_path );
+
+		// On ne teste pas le dernier segment (c'est le fichier).
+		array_pop( $segments );
+
+		foreach ( $segments as $segment ) {
+			if ( fnmatch( $pattern, $segment ) ) {
 				return true;
 			}
 		}
