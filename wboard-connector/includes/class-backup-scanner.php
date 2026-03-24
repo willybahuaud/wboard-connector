@@ -247,8 +247,9 @@ class WBoard_Connector_Backup_Scanner {
 	 * Verifie si un chemin relatif est dans un repertoire exclu.
 	 *
 	 * Supporte deux modes :
-	 * - Nom exact : "updraft" exclut tout repertoire nomme exactement "updraft"
-	 * - Glob avec * : "*cache*" exclut tout repertoire dont le nom contient "cache"
+	 * - Nom exact : "updraft" exclut tout repertoire nomme "updraft" a n'importe quel niveau
+	 * - Glob avec * : "*cache*" ne teste que le premier niveau sous wp-content
+	 *   (evite d'exclure des plugins entiers comme wp-super-cache)
 	 *
 	 * @param string $relative_path Le chemin relatif depuis wp-content/.
 	 * @param array  $excluded_dirs Les repertoires exclus.
@@ -277,29 +278,27 @@ class WBoard_Connector_Backup_Scanner {
 	}
 
 	/**
-	 * Teste si un segment du chemin matche un pattern glob.
+	 * Teste si le premier segment du chemin matche un pattern glob.
 	 *
-	 * Decoupe le chemin en segments (repertoires) et teste chacun
-	 * avec fnmatch. Ex: "*cache*" matchera "object-cache" ou "et-cache".
+	 * Seul le dossier de premier niveau (enfant direct de wp-content)
+	 * est teste pour eviter les faux positifs. Ex: "*cache*" matchera
+	 * le dossier "object-cache/" mais pas "plugins/wp-super-cache/".
 	 *
 	 * @param string $relative_path Le chemin relatif.
 	 * @param string $pattern       Le pattern glob (ex: "*cache*").
 	 *
-	 * @return bool True si un segment matche.
+	 * @return bool True si le premier segment matche.
 	 */
 	private function matches_glob_segment( $relative_path, $pattern ) {
-		$segments = explode( '/', $relative_path );
+		$first_slash = strpos( $relative_path, '/' );
 
-		// On ne teste pas le dernier segment (c'est le fichier).
-		array_pop( $segments );
-
-		foreach ( $segments as $segment ) {
-			if ( fnmatch( $pattern, $segment ) ) {
-				return true;
-			}
+		if ( false === $first_slash ) {
+			return false;
 		}
 
-		return false;
+		$first_segment = substr( $relative_path, 0, $first_slash );
+
+		return fnmatch( $pattern, $first_segment );
 	}
 
 	/**

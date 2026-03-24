@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 2.0.2
+Stable tag: 2.0.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,9 @@ Vivid Backup Pro et WPVivid Backup sont actuellement supportés.
 SecuPress Pro est actuellement supporté pour la collecte des alertes de sécurité.
 
 == Changelog ==
+
+= 2.0.3 =
+* Fix : les patterns glob (*cache*) ne matchent plus que le premier niveau de dossier sous wp-content, évitant d'exclure des plugins entiers (ex: wp-super-cache)
 
 = 2.0.2 =
 * Fix : les routes backup étaient conditionnées à une option locale (wboard_backup_config). Suppression du guard is_enabled(), la sécurité repose sur HMAC.
@@ -130,6 +133,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 2.0.3 =
+Correctif : les globs d'exclusion ne matchent plus que le premier niveau pour éviter les faux positifs sur les plugins.
 
 = 2.0.2 =
 Correctif : les routes backup sont maintenant toujours disponibles (suppression du guard is_enabled). Support glob dans les exclusions.
