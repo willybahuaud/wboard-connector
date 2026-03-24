@@ -86,10 +86,9 @@ class WBoard_Connector_Backup {
 		WBoard_Connector_Backup_Cleanup::schedule();
 		add_action( WBoard_Connector_Backup_Cleanup::CRON_HOOK, array( 'WBoard_Connector_Backup_Cleanup', 'run' ) );
 
-		if ( ! $this->is_enabled() ) {
-			return;
-		}
-
+		// Les routes sont toujours enregistrees : la securite repose
+		// sur la signature HMAC, pas sur un flag local. C'est le
+		// backup-manager qui decide si un site est actif ou non.
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 
