@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 2.0.3
+Stable tag: 2.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -60,7 +60,10 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Changelog ==
 
-= 2.0.3 =
+= 2.1.0 =
+* Feat : backup des fichiers racine (.htaccess, .user.ini, php.ini, robots.txt) avec préfixe @root/
+* Feat : version WordPress et PHP remontées dans les métadonnées du scan
+* Feat : support des exclusions de fichiers par pattern glob (ex: temp-*.txt)
 * Fix : les patterns glob (*cache*) ne matchent plus que le premier niveau de dossier sous wp-content, évitant d'exclure des plugins entiers (ex: wp-super-cache)
 
 = 2.0.2 =
@@ -133,6 +136,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 2.1.0 =
+Backup des fichiers racine (.htaccess, robots.txt…), métadonnées WP/PHP, exclusion de fichiers par pattern glob. Inclut le fix glob du premier niveau.
 
 = 2.0.3 =
 Correctif : les globs d'exclusion ne matchent plus que le premier niveau pour éviter les faux positifs sur les plugins.
