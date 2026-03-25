@@ -132,7 +132,9 @@ Ce plugin fait partie de l'écosystème **WBoard** :
 |-------|-------------|
 | [wboard-site](https://github.com/willybahuaud/wboard-site) | Dashboard Laravel + React |
 | **wboard-connector** | Ce plugin WordPress |
-| [wboard-kuma](https://github.com/willybahuaud/wboard-kuma) | Uptime Kuma + proxy API (Docker) |
+| [wboard-backup-manager](https://github.com/willybahuaud/wboard-backup-manager) | Orchestrateur de sauvegardes incrémentales (Go) |
+| [wboard-kuma](https://github.com/willybahuaud/wboard-kuma) | Uptime Kuma + proxy API REST (monitoring) |
+| [wboard-backstop](https://github.com/willybahuaud/wboard-backstop) | Tests de régression visuelle (BackstopJS + Docker) |
 
 ---
 
