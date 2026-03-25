@@ -94,6 +94,7 @@ class WBoard_Connector_Backup_Scanner {
 
 		// Fusion des exclusions : defauts + config board + requete.
 		$excluded_dirs       = $this->merge_excluded_dirs( $exclusions, $config );
+		$excluded_files      = $this->merge_excluded_files( $exclusions, $config );
 		$excluded_extensions = $this->merge_excluded_extensions( $exclusions );
 
 		$manifest_lines = array();
@@ -137,6 +138,12 @@ class WBoard_Connector_Backup_Scanner {
 
 				// Verifie les exclusions de repertoires.
 				if ( $this->is_dir_excluded( $relative_path, $excluded_dirs ) ) {
+					$current_index++;
+					continue;
+				}
+
+				// Verifie les exclusions de fichiers (patterns glob sur le nom).
+				if ( $this->is_file_excluded( $relative_path, $excluded_files ) ) {
 					$current_index++;
 					continue;
 				}
@@ -337,6 +344,57 @@ class WBoard_Connector_Backup_Scanner {
 		}
 
 		return array_unique( array_filter( $dirs ) );
+	}
+
+	/**
+	 * Fusionne les fichiers exclus : config + requete.
+	 *
+	 * @param array $request_exclusions Les exclusions de la requete.
+	 * @param array $config             La config backup.
+	 *
+	 * @return array Les patterns de fichiers exclus (globs sur le nom, ex: "temp-*.txt").
+	 */
+	private function merge_excluded_files( array $request_exclusions, array $config ) {
+		$files = array();
+
+		// Exclusions de la config board.
+		if ( ! empty( $config['excluded_files'] ) ) {
+			$files = array_merge( $files, (array) $config['excluded_files'] );
+		}
+
+		// Exclusions envoyees par le backup-manager dans la requete.
+		if ( ! empty( $request_exclusions['files'] ) ) {
+			$files = array_merge( $files, (array) $request_exclusions['files'] );
+		}
+
+		return array_unique( array_filter( $files ) );
+	}
+
+	/**
+	 * Verifie si un fichier matche un pattern d'exclusion.
+	 *
+	 * Les patterns sont des globs appliques sur le nom du fichier uniquement
+	 * (pas le chemin complet), ex: "temp-*.txt", "*.sql".
+	 *
+	 * @param string $relative_path  Le chemin relatif depuis wp-content/.
+	 * @param array  $excluded_files Les patterns glob a tester.
+	 *
+	 * @return bool True si le fichier est exclu.
+	 */
+	private function is_file_excluded( $relative_path, array $excluded_files ) {
+		if ( empty( $excluded_files ) ) {
+			return false;
+		}
+
+		$filename = basename( $relative_path );
+
+		foreach ( $excluded_files as $pattern ) {
+			if ( fnmatch( $pattern, $filename ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
