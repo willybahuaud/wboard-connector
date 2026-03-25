@@ -27,9 +27,12 @@ Vous gérez plusieurs sites WordPress ? **WBoard Connector** est le plugin compa
 |--------|-------------|
 | **Versions** | WordPress, PHP, plugins, thèmes |
 | **Mises à jour** | Core, plugins et thèmes avec versions disponibles |
-| **Backups** | Statut WPVivid (free & Pro), dernière sauvegarde, schedules |
 | **WP-Cron** | État du cron, tâches en retard |
 | **Multisite** | Réseau, nombre de sites, niveau d'activation des plugins |
+
+### Backup intégré
+
+Le plugin sert de relais pour le [backup-manager](https://github.com/willybahuaud/wboard-backup-manager) : scan des fichiers, streaming par batch, export SQL table par table. Tout est pensé pour les hébergements mutualisés (timeout 30s, 128 Mo RAM).
 
 ### Connexion en un clic
 
@@ -74,11 +77,6 @@ La sécurité n'est pas une option, c'est la fondation.
 
 ## Compatibilité
 
-### Plugins de backup supportés
-
-- WPVivid Backup (gratuit)
-- WPVivid Backup Pro (schedules classiques + incrémentaux)
-
 ### WordPress Multisite
 
 Support complet avec :
@@ -90,15 +88,27 @@ Support complet avec :
 
 ## Endpoints API
 
-Le plugin expose une API REST sécurisée :
+Le plugin expose une API REST sécurisée. Tous les endpoints requièrent une signature HMAC valide.
+
+### Supervision
 
 | Endpoint | Méthode | Description |
 |----------|---------|-------------|
 | `/wboard/v1/status` | GET | État complet du site |
 | `/wboard/v1/autologin` | POST | Génère un token de connexion |
-| `/wboard/v1/regenerate-key` | POST | Régénère la clé secrète |
+| `/wboard/v1/update-component` | POST | Met à jour un plugin ou thème |
+| `/wboard/v1/test-session` | POST | Vérifie la session auto-login |
+| `/wboard/v1/destroy-sessions` | POST | Invalide les sessions actives |
 
-Tous les endpoints requièrent une signature HMAC valide.
+### Backup (utilisés par le backup-manager)
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/wboard/v1/backup/scan` | POST | Scan paginé des fichiers (manifeste) |
+| `/wboard/v1/backup/stream` | POST | Streaming tar des fichiers demandés |
+| `/wboard/v1/backup/db/tables` | POST | Liste des tables avec checksums |
+| `/wboard/v1/backup/db/stream` | POST | Export SQL streaming (tar, batch par table) |
+| `/wboard/v1/backup/status` | GET | Statut du dernier backup |
 
 ---
 
@@ -106,18 +116,25 @@ Tous les endpoints requièrent une signature HMAC valide.
 
 ```
 wboard-connector/
-├── wboard-connector.php    # Point d'entrée
-├── readme.txt              # Readme WordPress
+├── wboard-connector.php        # Point d'entrée
+├── readme.txt                  # Readme WordPress
 ├── includes/
-│   ├── class-api.php       # Endpoints REST
-│   ├── class-autologin.php # Connexion automatique
-│   ├── class-collector.php # Collecte des données
-│   ├── class-multisite.php # Support multisite
-│   ├── class-security.php  # Vérification HMAC
-│   ├── class-settings.php  # Page de réglages
-│   └── class-updater.php   # Auto-update GitHub
+│   ├── class-api.php           # Endpoints REST (supervision)
+│   ├── class-autologin.php     # Connexion automatique
+│   ├── class-backup.php        # Endpoints REST (backup)
+│   ├── class-backup-scanner.php # Scan fichiers paginé
+│   ├── class-backup-streamer.php # Streaming tar des fichiers
+│   ├── class-backup-db.php     # Export SQL streaming
+│   ├── class-backup-cleanup.php # Nettoyage fichiers temporaires
+│   ├── class-collector.php     # Collecte des données site
+│   ├── class-multisite.php     # Support multisite
+│   ├── class-security.php      # Vérification HMAC
+│   ├── class-settings.php      # Page de réglages
+│   ├── class-test-session.php  # Test session auto-login
+│   ├── class-remote-updater.php # MAJ composants à distance
+│   └── class-updater.php       # Auto-update GitHub
 └── admin/
-    ├── settings-page.php   # Template réglages
+    ├── settings-page.php       # Template réglages
     ├── css/admin.css
     └── js/admin.js
 ```
