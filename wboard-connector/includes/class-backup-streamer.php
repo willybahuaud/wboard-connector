@@ -245,9 +245,25 @@ class WBoard_Connector_Backup_Streamer {
 	}
 
 	/**
+	 * Fichiers racine autorises (whitelist stricte).
+	 *
+	 * Seuls ces fichiers peuvent etre demandes via le prefixe @root/.
+	 * wp-config.php est volontairement exclu (contient des secrets).
+	 *
+	 * @var array
+	 */
+	const ALLOWED_ROOT_FILES = array(
+		'.htaccess',
+		'.user.ini',
+		'php.ini',
+		'robots.txt',
+	);
+
+	/**
 	 * Valide les chemins de fichiers.
 	 *
-	 * Les fichiers sont relatifs a wp-content/.
+	 * Les fichiers sont relatifs a wp-content/, sauf ceux prefixes
+	 * @root/ qui sont resolus depuis ABSPATH (whitelist stricte).
 	 *
 	 * @param array $files Liste des chemins relatifs.
 	 *
@@ -274,6 +290,22 @@ class WBoard_Connector_Backup_Streamer {
 				continue;
 			}
 
+			// Fichiers racine : prefixe @root/, whitelist stricte.
+			if ( strpos( $relative_path, '@root/' ) === 0 ) {
+				$root_file = substr( $relative_path, 6 ); // Retire "@root/".
+
+				if ( ! in_array( $root_file, self::ALLOWED_ROOT_FILES, true ) ) {
+					continue;
+				}
+
+				$absolute_path = ABSPATH . $root_file;
+				if ( is_file( $absolute_path ) ) {
+					$validated[ $relative_path ] = $absolute_path;
+				}
+				continue;
+			}
+
+			// Fichiers wp-content classiques.
 			$absolute_path = $base_dir . '/' . $relative_path;
 			$real_path     = realpath( $absolute_path );
 

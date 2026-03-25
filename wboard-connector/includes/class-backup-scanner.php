@@ -58,6 +58,21 @@ class WBoard_Connector_Backup_Scanner {
 	);
 
 	/**
+	 * Fichiers racine a inclure dans le backup.
+	 *
+	 * Prefixes @root/ dans le manifeste pour les distinguer de wp-content.
+	 * wp-config.php est volontairement exclu (contient des secrets).
+	 *
+	 * @var array
+	 */
+	const ROOT_FILES = array(
+		'.htaccess',
+		'.user.ini',
+		'php.ini',
+		'robots.txt',
+	);
+
+	/**
 	 * Repertoires exclus par defaut dans wp-content/.
 	 *
 	 * @var array
@@ -175,6 +190,13 @@ class WBoard_Connector_Backup_Scanner {
 			);
 		}
 
+		// Fichiers racine (uniquement sur la derniere page).
+		if ( $is_complete ) {
+			$root_lines = $this->scan_root_files();
+			$manifest_lines = array_merge( $manifest_lines, $root_lines );
+			$files_scanned += count( $root_lines );
+		}
+
 		$manifest_content = implode( "\n", $manifest_lines );
 
 		return new WP_REST_Response(
@@ -186,6 +208,10 @@ class WBoard_Connector_Backup_Scanner {
 					'files_scanned' => $files_scanned,
 					'duration'      => time() - $start_time,
 					'scan_dir'      => $scan_dir,
+				),
+				'meta'     => array(
+					'wp_version'  => get_bloginfo( 'version' ),
+					'php_version' => phpversion(),
 				),
 			),
 			200
@@ -201,6 +227,38 @@ class WBoard_Connector_Backup_Scanner {
 	 */
 	private function get_scan_directory() {
 		return WP_CONTENT_DIR;
+	}
+
+	/**
+	 * Scanne les fichiers de configuration racine (ABSPATH).
+	 *
+	 * Seuls les fichiers de la liste ROOT_FILES sont inclus.
+	 * Ils sont prefixes @root/ dans le manifeste pour les distinguer
+	 * des fichiers wp-content. wp-config.php n'est jamais inclus.
+	 *
+	 * @return array Lignes de manifeste au format "chemin\tmtime\ttaille".
+	 */
+	private function scan_root_files() {
+		$lines = array();
+
+		foreach ( self::ROOT_FILES as $filename ) {
+			$filepath = ABSPATH . $filename;
+
+			if ( ! file_exists( $filepath ) || ! is_file( $filepath ) ) {
+				continue;
+			}
+
+			$mtime = filemtime( $filepath );
+			$size  = filesize( $filepath );
+
+			if ( false === $mtime || false === $size ) {
+				continue;
+			}
+
+			$lines[] = '@root/' . $filename . "\t" . $mtime . "\t" . $size;
+		}
+
+		return $lines;
 	}
 
 	/**
