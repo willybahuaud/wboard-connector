@@ -101,6 +101,7 @@ class WBoard_Connector_Backup_Scanner {
 
 		$offset     = isset( $body['offset'] ) ? (int) $body['offset'] : 0;
 		$exclusions = isset( $body['exclusions'] ) ? (array) $body['exclusions'] : array();
+		$max_files  = isset( $body['max_files'] ) ? (int) $body['max_files'] : 0;
 
 		$start_time    = time();
 		$safe_limit    = $this->get_safe_execution_time();
@@ -127,8 +128,12 @@ class WBoard_Connector_Backup_Scanner {
 					continue;
 				}
 
-				// Timeout : on s'arrete proprement.
+				// Limites : timeout PHP ou max_files atteint.
 				if ( $safe_limit > 0 && ( time() - $start_time ) >= $safe_limit ) {
+					$is_complete = false;
+					break;
+				}
+				if ( $max_files > 0 && $files_scanned >= $max_files ) {
 					$is_complete = false;
 					break;
 				}
