@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 2.1.0
+Stable tag: 2.1.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,13 @@ Vivid Backup Pro et WPVivid Backup sont actuellement supportés.
 SecuPress Pro est actuellement supporté pour la collecte des alertes de sécurité.
 
 == Changelog ==
+
+= 2.1.1 =
+* Fix : export DB des grosses tables (wp_posts, wp_postmeta…) qui échouaient silencieusement sur hébergements mutualisés
+* Export DB unbuffered (MYSQLI_USE_RESULT) : une seule ligne en RAM à la fois, quelle que soit la taille de la table
+* Reconnexion MySQL automatique entre les tables (check_connection) en cas de timeout hébergeur
+* Memory limit relevé à 512M pendant le streaming DB
+* Logging détaillé pour diagnostic des exports DB (mémoire, erreurs MySQL, taille des fichiers)
 
 = 2.1.0 =
 * Feat : backup des fichiers racine (.htaccess, .user.ini, php.ini, robots.txt) avec préfixe @root/
@@ -136,6 +143,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 2.1.1 =
+Correctif critique : les grosses tables DB (posts, postmeta…) n'étaient pas exportées sur les mutualisés. Export réécrit en unbuffered pour une empreinte mémoire constante.
 
 = 2.1.0 =
 Backup des fichiers racine (.htaccess, robots.txt…), métadonnées WP/PHP, exclusion de fichiers par pattern glob. Inclut le fix glob du premier niveau.
