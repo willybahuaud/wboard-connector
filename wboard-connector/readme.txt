@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 2.2.0
+Stable tag: 2.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -59,6 +59,9 @@ Vivid Backup Pro et WPVivid Backup sont actuellement supportés.
 SecuPress Pro est actuellement supporté pour la collecte des alertes de sécurité.
 
 == Changelog ==
+
+= 2.2.1 =
+* Fix : l'export DB corrompait les caractères % (remplacés par un hash SHA-256 par wpdb::_real_escape). Utilise mysqli::real_escape_string directement.
 
 = 2.2.0 =
 * Fix : streaming tar des fichiers avec chemins > 100 caractères (support USTAR prefix, corrige les fichiers manquants dans les backups)
@@ -145,6 +148,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 * Page de réglages
 
 == Upgrade Notice ==
+
+= 2.2.1 =
+Correctif : les % dans les contenus étaient corrompus dans les dumps SQL. Après restore, lancer `wp search-replace '{4c1d2d715c95f5a29fb7cc765782eb94ccb8ad25ff4a608d801cae18b1c548ae}' '%' --all-tables --precise` pour corriger les données existantes.
 
 = 2.2.0 =
 Correctif fichiers manquants dans les backups (chemins longs tronqués dans le tar). Nouvelles règles d'exclusion de fichiers (racine, chemin précis, ou partout).
