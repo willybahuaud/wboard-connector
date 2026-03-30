@@ -244,6 +244,8 @@ class WBoard_Connector_Backup_Db {
 
 			$size = @filesize( $sql_path );
 			if ( false === $size || 0 === $size ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Table %s skippee : fichier vide (pk=%s, batch=%d)', $name, $pk ?? 'null', $batch_size ) );
 				@unlink( $sql_path );
 				continue;
 			}
@@ -301,6 +303,8 @@ class WBoard_Connector_Backup_Db {
 
 		$handle = fopen( $file_path, 'w' );
 		if ( false === $handle ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( sprintf( '[WBoard DB] fopen echoue pour %s', $file_path ) );
 			return;
 		}
 
@@ -310,10 +314,14 @@ class WBoard_Connector_Backup_Db {
 			fwrite( $handle, "-- Table: {$table}\n" );
 			fwrite( $handle, "DROP TABLE IF EXISTS `{$table}`;\n" );
 			fwrite( $handle, $create_table . ";\n\n" );
+		} else {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( sprintf( '[WBoard DB] SHOW CREATE TABLE echoue pour %s (last_error: %s)', $table, $wpdb->last_error ) );
 		}
 
 		// Pagination interne : itere jusqu'a epuisement des lignes.
-		$cursor = 0;
+		$cursor     = 0;
+		$total_rows = 0;
 		while ( true ) {
 			if ( ! empty( $primary_key ) ) {
 				$rows = $this->fetch_rows_by_pk( $table, $primary_key, $cursor, $batch_size );
@@ -322,8 +330,13 @@ class WBoard_Connector_Backup_Db {
 			}
 
 			if ( empty( $rows ) ) {
+				if ( 0 === $total_rows && $wpdb->last_error ) {
+					// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+					error_log( sprintf( '[WBoard DB] Aucune ligne pour %s, MySQL error: %s', $table, $wpdb->last_error ) );
+				}
 				break;
 			}
+			$total_rows += count( $rows );
 
 			$columns         = array_keys( (array) $rows[0] );
 			$columns_escaped = array_map( array( $this, 'escape_column_name' ), $columns );
@@ -359,6 +372,10 @@ class WBoard_Connector_Backup_Db {
 		}
 
 		fclose( $handle );
+
+		$final_size = @filesize( $file_path );
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		error_log( sprintf( '[WBoard DB] Export %s : %d lignes, %d octets (pk=%s, batch=%d)', $table, $total_rows, $final_size, $primary_key ?? 'null', $batch_size ) );
 	}
 
 	/**
@@ -586,6 +603,12 @@ class WBoard_Connector_Backup_Db {
 	private function fetch_rows_by_pk( $table, $primary_key, $cursor, $batch_size ) {
 		global $wpdb;
 
+		// Verifie que la connexion MySQL est toujours active.
+		// Reconnexion automatique si elle a ete coupee (timeout, etc.).
+		if ( method_exists( $wpdb, 'check_connection' ) ) {
+			$wpdb->check_connection();
+		}
+
 		// Le nom de table et de colonne ont ete valides par regex dans handle_export().
 		// On ne peut pas utiliser prepare() pour les identifiants SQL.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -613,6 +636,11 @@ class WBoard_Connector_Backup_Db {
 	private function fetch_rows_by_offset( $table, $offset, $batch_size ) {
 		global $wpdb;
 
+		// Verifie que la connexion MySQL est toujours active.
+		if ( method_exists( $wpdb, 'check_connection' ) ) {
+			$wpdb->check_connection();
+		}
+
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
@@ -638,6 +666,11 @@ class WBoard_Connector_Backup_Db {
 	 */
 	private function get_create_table_statement( $table ) {
 		global $wpdb;
+
+		// Verifie que la connexion MySQL est toujours active.
+		if ( method_exists( $wpdb, 'check_connection' ) ) {
+			$wpdb->check_connection();
+		}
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$row = $wpdb->get_row( "SHOW CREATE TABLE `{$table}`", ARRAY_A );
