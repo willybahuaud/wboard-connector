@@ -333,60 +333,27 @@ class WBoard_Connector_Backup_Db {
 			error_log( sprintf( '[WBoard DB] SHOW CREATE TABLE echoue pour %s (last_error: %s)', $table, $wpdb->last_error ) );
 		}
 
-		// Pagination interne : itere jusqu'a epuisement des lignes.
+		// Export unbuffered : les lignes sont streamees une par une depuis MySQL
+		// sans charger le batch complet en memoire PHP.
+		// Pagination par curseur PK (ou OFFSET) pour ne pas bloquer la table.
 		$cursor     = 0;
 		$total_rows = 0;
+
 		while ( true ) {
-			if ( ! empty( $primary_key ) ) {
-				$rows = $this->fetch_rows_by_pk( $table, $primary_key, $cursor, $batch_size );
-			} else {
-				$rows = $this->fetch_rows_by_offset( $table, $cursor, $batch_size );
-			}
+			$batch_rows = $this->stream_rows_to_file( $handle, $table, $primary_key, $cursor, $batch_size );
 
-			if ( empty( $rows ) ) {
-				if ( 0 === $total_rows && $wpdb->last_error ) {
-					// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-					error_log( sprintf( '[WBoard DB] Aucune ligne pour %s, MySQL error: %s', $table, $wpdb->last_error ) );
-				}
-				break;
-			}
-			$total_rows += count( $rows );
-
-			$columns         = array_keys( (array) $rows[0] );
-			$columns_escaped = array_map( array( $this, 'escape_column_name' ), $columns );
-			$columns_str     = implode( ', ', $columns_escaped );
-
-			foreach ( $rows as $row ) {
-				$row    = (array) $row;
-				$values = array();
-
-				foreach ( $row as $value ) {
-					if ( null === $value ) {
-						$values[] = 'NULL';
-					} else {
-						// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-						$values[] = "'" . $wpdb->_real_escape( $value ) . "'";
-					}
-				}
-
-				fwrite( $handle, "INSERT INTO `{$table}` ({$columns_str}) VALUES (" . implode( ', ', $values ) . ");\n" );
-
-				if ( ! empty( $primary_key ) && isset( $row[ $primary_key ] ) ) {
-					$cursor = (int) $row[ $primary_key ];
-				}
-			}
-
-			if ( empty( $primary_key ) ) {
-				$cursor += count( $rows );
-			}
-
-			if ( count( $rows ) < $batch_size ) {
+			if ( false === $batch_rows ) {
+				// Erreur MySQL.
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Erreur export %s au curseur %d : %s', $table, $cursor, $wpdb->last_error ) );
 				break;
 			}
 
-			// Liberation memoire : supprime le cache de resultats $wpdb.
-			$wpdb->flush();
-			unset( $rows );
+			$total_rows += $batch_rows;
+
+			if ( $batch_rows < $batch_size ) {
+				break;
+			}
 		}
 
 		fclose( $handle );
@@ -394,6 +361,94 @@ class WBoard_Connector_Backup_Db {
 		$final_size = @filesize( $file_path );
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		error_log( sprintf( '[WBoard DB] Export %s : %d lignes, %d octets (pk=%s, batch=%d)', $table, $total_rows, $final_size, $primary_key ?? 'null', $batch_size ) );
+	}
+
+	/**
+	 * Streame les lignes d'un batch directement dans le fichier SQL.
+	 *
+	 * Utilise MYSQLI_USE_RESULT (unbuffered) pour ne jamais charger
+	 * plus d'une ligne a la fois en memoire PHP.
+	 * Chaque ligne est ecrite immediatement dans le fichier puis liberee.
+	 *
+	 * @param resource    $handle      Handle du fichier de sortie.
+	 * @param string      $table       Nom de la table.
+	 * @param string|null $primary_key Colonne PK (null si pas de PK).
+	 * @param int         &$cursor     Curseur (PK ou offset), modifie en place.
+	 * @param int         $batch_size  Nombre de lignes max par requete.
+	 *
+	 * @return int|false Nombre de lignes ecrites, ou false en cas d'erreur.
+	 */
+	private function stream_rows_to_file( $handle, $table, $primary_key, &$cursor, $batch_size ) {
+		global $wpdb;
+
+		// Reconnexion si necessaire.
+		if ( method_exists( $wpdb, 'check_connection' ) ) {
+			$wpdb->check_connection();
+		}
+
+		// Construction de la requete SQL.
+		if ( ! empty( $primary_key ) ) {
+			$sql = $wpdb->prepare(
+				"SELECT * FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d",
+				$cursor,
+				$batch_size
+			);
+		} else {
+			$sql = $wpdb->prepare(
+				"SELECT * FROM `{$table}` LIMIT %d OFFSET %d",
+				$batch_size,
+				$cursor
+			);
+		}
+
+		// Requete unbuffered : MySQL envoie les lignes a la demande,
+		// PHP ne stocke qu'une seule ligne a la fois en memoire.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
+		$result = $wpdb->dbh->query( $sql, MYSQLI_USE_RESULT );
+
+		if ( ! $result ) {
+			return false;
+		}
+
+		$columns_str = null;
+		$count       = 0;
+
+		// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+		while ( $row = $result->fetch_assoc() ) {
+			// Header colonnes au premier passage.
+			if ( null === $columns_str ) {
+				$columns_escaped = array_map( array( $this, 'escape_column_name' ), array_keys( $row ) );
+				$columns_str     = implode( ', ', $columns_escaped );
+			}
+
+			$values = array();
+			foreach ( $row as $value ) {
+				if ( null === $value ) {
+					$values[] = 'NULL';
+				} else {
+					$values[] = "'" . $wpdb->_real_escape( $value ) . "'";
+				}
+			}
+
+			fwrite( $handle, "INSERT INTO `{$table}` ({$columns_str}) VALUES (" . implode( ', ', $values ) . ");\n" );
+
+			// Met a jour le curseur.
+			if ( ! empty( $primary_key ) && isset( $row[ $primary_key ] ) ) {
+				$cursor = (int) $row[ $primary_key ];
+			}
+
+			$count++;
+		}
+
+		// Libere le result set (obligatoire avec MYSQLI_USE_RESULT
+		// avant toute autre requete sur cette connexion).
+		$result->free();
+
+		if ( empty( $primary_key ) ) {
+			$cursor += $count;
+		}
+
+		return $count;
 	}
 
 	/**
