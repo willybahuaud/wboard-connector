@@ -217,11 +217,19 @@ class WBoard_Connector_Backup_Db {
 	 * @return void
 	 */
 	private function stream_tables_tar( array $tables ) {
+		global $wpdb;
+
 		while ( ob_get_level() > 0 ) {
 			ob_end_clean();
 		}
 
 		set_time_limit( 0 );
+
+		// Tente d'augmenter la memoire pour les grosses tables.
+		$current_limit = wp_convert_hr_to_bytes( ini_get( 'memory_limit' ) );
+		if ( $current_limit > 0 && $current_limit < 512 * 1024 * 1024 ) {
+			@ini_set( 'memory_limit', '512M' ); // phpcs:ignore WordPress.PHP.IniSet.memory_limit_Disallowed
+		}
 
 		header( 'Content-Type: application/x-tar' );
 		header( 'X-WBoard-Tables-Count: ' . count( $tables ) );
@@ -231,10 +239,16 @@ class WBoard_Connector_Backup_Db {
 			return;
 		}
 
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		error_log( sprintf( '[WBoard DB] Debut streaming %d tables (memory: %s, limit: %s, temp: %s)', count( $tables ), size_format( memory_get_usage( true ) ), ini_get( 'memory_limit' ), $temp_dir ) );
+
 		foreach ( $tables as $table_info ) {
 			$name       = $table_info['name'];
 			$pk         = $table_info['primary_key'];
 			$batch_size = $this->adapt_batch_size( $table_info['batch_size'] );
+
+			// Liberation memoire entre les tables.
+			$wpdb->flush();
 
 			// Export complet de la table vers un fichier temporaire.
 			$file_id  = wp_generate_password( 8, false, false );
@@ -245,7 +259,7 @@ class WBoard_Connector_Backup_Db {
 			$size = @filesize( $sql_path );
 			if ( false === $size || 0 === $size ) {
 				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-				error_log( sprintf( '[WBoard DB] Table %s skippee : fichier vide (pk=%s, batch=%d)', $name, $pk ?? 'null', $batch_size ) );
+				error_log( sprintf( '[WBoard DB] Table %s skippee : fichier vide (pk=%s, batch=%d, memory=%s)', $name, $pk ?? 'null', $batch_size, size_format( memory_get_usage( true ) ) ) );
 				@unlink( $sql_path );
 				continue;
 			}
@@ -369,6 +383,10 @@ class WBoard_Connector_Backup_Db {
 			if ( count( $rows ) < $batch_size ) {
 				break;
 			}
+
+			// Liberation memoire : supprime le cache de resultats $wpdb.
+			$wpdb->flush();
+			unset( $rows );
 		}
 
 		fclose( $handle );
