@@ -179,6 +179,13 @@ class WBoard_Connector_Backup_Streamer {
 		// Header tar : 512 octets, rempli de zeros.
 		$header = str_repeat( "\0", self::TAR_BLOCK_SIZE );
 
+		// USTAR : si le chemin depasse 100 chars, on split en prefix (155) + name (100).
+		// Go archive/tar reconstruit automatiquement prefix + "/" + name.
+		$prefix = '';
+		if ( strlen( $name ) > 100 ) {
+			list( $prefix, $name ) = $this->split_tar_path( $name );
+		}
+
 		// Champs du header tar POSIX/USTAR.
 		// name : 0-99 (100 bytes).
 		$header = $this->write_field( $header, 0, $name, 100 );
@@ -207,6 +214,11 @@ class WBoard_Connector_Backup_Streamer {
 		// version : 263-264 (2 bytes) — "00".
 		$header = $this->write_field( $header, 263, '00', 2 );
 
+		// prefix : 345-499 (155 bytes) — partie prefixe du chemin USTAR.
+		if ( '' !== $prefix ) {
+			$header = $this->write_field( $header, 345, $prefix, 155 );
+		}
+
 		// Calcul du checksum (somme des octets du header avec le champ checksum = espaces).
 		// checksum : 148-155 (8 bytes).
 		// Remplit temporairement le champ checksum avec des espaces.
@@ -224,6 +236,45 @@ class WBoard_Connector_Backup_Streamer {
 		$header       = $this->write_field( $header, 148, $checksum_str, 8 );
 
 		return $header;
+	}
+
+	/**
+	 * Split un chemin long en prefix + name pour le format USTAR.
+	 *
+	 * Cherche le dernier "/" qui permet de garder name <= 100 chars
+	 * et prefix <= 155 chars.
+	 *
+	 * @param string $path Chemin complet.
+	 *
+	 * @return array [ prefix, name ].
+	 */
+	private function split_tar_path( $path ) {
+		// Cherche la derniere position de "/" qui laisse name <= 100 chars.
+		$best_split = false;
+		$len        = strlen( $path );
+
+		for ( $i = 0; $i < $len; $i++ ) {
+			if ( '/' !== $path[ $i ] ) {
+				continue;
+			}
+
+			$prefix_part = substr( $path, 0, $i );
+			$name_part   = substr( $path, $i + 1 );
+
+			if ( strlen( $prefix_part ) <= 155 && strlen( $name_part ) <= 100 ) {
+				$best_split = $i;
+			}
+		}
+
+		if ( false !== $best_split ) {
+			return array(
+				substr( $path, 0, $best_split ),
+				substr( $path, $best_split + 1 ),
+			);
+		}
+
+		// Fallback : chemin trop long meme avec USTAR (> 255 chars), on tronque.
+		return array( '', substr( $path, 0, 100 ) );
 	}
 
 	/**

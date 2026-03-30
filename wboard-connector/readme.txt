@@ -4,7 +4,7 @@ Tags: monitoring, dashboard, backup, security, management, multisite
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.3
-Stable tag: 2.1.1
+Stable tag: 2.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -60,7 +60,9 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Changelog ==
 
-= 2.1.1 =
+= 2.2.0 =
+* Fix : streaming tar des fichiers avec chemins > 100 caractères (support USTAR prefix, corrige les fichiers manquants dans les backups)
+* Feat : exclusions de fichiers repensées — pattern sans "/" = racine wp-content uniquement, avec "/" = chemin précis, avec "**/" = partout dans l'arbo
 * Fix : export DB des grosses tables (wp_posts, wp_postmeta…) qui échouaient silencieusement sur hébergements mutualisés
 * Export DB unbuffered (MYSQLI_USE_RESULT) : une seule ligne en RAM à la fois, quelle que soit la taille de la table
 * Reconnexion MySQL automatique entre les tables (check_connection) en cas de timeout hébergeur
@@ -144,8 +146,8 @@ SecuPress Pro est actuellement supporté pour la collecte des alertes de sécuri
 
 == Upgrade Notice ==
 
-= 2.1.1 =
-Correctif critique : les grosses tables DB (posts, postmeta…) n'étaient pas exportées sur les mutualisés. Export réécrit en unbuffered pour une empreinte mémoire constante.
+= 2.2.0 =
+Correctif fichiers manquants dans les backups (chemins longs tronqués dans le tar). Nouvelles règles d'exclusion de fichiers (racine, chemin précis, ou partout).
 
 = 2.1.0 =
 Backup des fichiers racine (.htaccess, robots.txt…), métadonnées WP/PHP, exclusion de fichiers par pattern glob. Inclut le fix glob du premier niveau.

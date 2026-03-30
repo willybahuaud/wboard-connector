@@ -436,8 +436,12 @@ class WBoard_Connector_Backup_Scanner {
 	/**
 	 * Verifie si un fichier matche un pattern d'exclusion.
 	 *
-	 * Les patterns sont des globs appliques sur le nom du fichier uniquement
-	 * (pas le chemin complet), ex: "temp-*.txt", "*.sql".
+	 * Deux modes selon le pattern :
+	 * - Sans "/" : matche uniquement les fichiers a la racine de wp-content/.
+	 *   Ex: "litespeed.php" exclut wp-content/litespeed.php
+	 *   mais PAS wp-content/plugins/litespeed-cache/litespeed.php.
+	 * - Avec "/" : matche sur le chemin relatif complet (glob).
+	 *   Ex: "uploads/truc/pattern-*" exclut wp-content/uploads/truc/pattern-foo.log.
 	 *
 	 * @param string $relative_path  Le chemin relatif depuis wp-content/.
 	 * @param array  $excluded_files Les patterns glob a tester.
@@ -449,11 +453,26 @@ class WBoard_Connector_Backup_Scanner {
 			return false;
 		}
 
-		$filename = basename( $relative_path );
+		$is_root_file = ( strpos( $relative_path, '/' ) === false );
+		$filename     = basename( $relative_path );
 
 		foreach ( $excluded_files as $pattern ) {
-			if ( fnmatch( $pattern, $filename ) ) {
-				return true;
+			if ( strpos( $pattern, '**/' ) === 0 ) {
+				// Pattern "**/" : matche le nom de fichier partout dans l'arbo.
+				$sub_pattern = substr( $pattern, 3 );
+				if ( fnmatch( $sub_pattern, $filename ) ) {
+					return true;
+				}
+			} elseif ( strpos( $pattern, '/' ) !== false ) {
+				// Pattern avec "/" : matche sur le chemin relatif complet.
+				if ( fnmatch( $pattern, $relative_path ) ) {
+					return true;
+				}
+			} elseif ( $is_root_file ) {
+				// Pattern sans "/" : matche uniquement a la racine.
+				if ( fnmatch( $pattern, $relative_path ) ) {
+					return true;
+				}
 			}
 		}
 
