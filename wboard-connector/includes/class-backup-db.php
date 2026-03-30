@@ -426,7 +426,7 @@ class WBoard_Connector_Backup_Db {
 				if ( null === $value ) {
 					$values[] = 'NULL';
 				} else {
-					$values[] = "'" . $wpdb->_real_escape( $value ) . "'";
+					$values[] = "'" . $wpdb->dbh->real_escape_string( $value ) . "'";
 				}
 			}
 
