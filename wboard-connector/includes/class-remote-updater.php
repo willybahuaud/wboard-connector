@@ -32,6 +32,10 @@ class WBoard_Connector_Remote_Updater {
 	 * @return array Resultat de la MAJ avec status, code, versions, message.
 	 */
 	public function update_plugin( $slug ) {
+		// Empecher PHP de s'arreter si le board ferme la connexion
+		// avant la fin (timeout HTTP). La reactivation doit se terminer.
+		ignore_user_abort( true );
+
 		$this->load_upgrader_dependencies();
 
 		// Resoudre slug → plugin file.
@@ -50,6 +54,7 @@ class WBoard_Connector_Remote_Updater {
 		$old_version        = $this->get_plugin_version( $plugin_file );
 		$was_active         = is_plugin_active( $plugin_file );
 		$was_network_active = is_multisite() && is_plugin_active_for_network( $plugin_file );
+		$is_self_update     = ( 'wboard-connector' === $slug );
 
 		// Couper les emails de notification.
 		$this->silence_emails();
@@ -65,15 +70,15 @@ class WBoard_Connector_Remote_Updater {
 		$result   = $upgrader->upgrade( $plugin_file );
 		ob_end_clean();
 
+		// Collecter le resultat sans return premature.
+		// La reactivation et le cleanup se font toujours a la fin.
+		$update_result = null;
+
 		// Verifications post-update (4 niveaux).
 		$error = $this->check_upgrade_result( $result, $skin );
 
 		if ( $error ) {
-			$this->restore_emails();
-			$this->disable_maintenance_mode();
-			$this->cleanup_temp_backup( $slug, 'plugin' );
-
-			return array(
+			$update_result = array(
 				'status'      => 'error',
 				'code'        => $error['code'],
 				'old_version' => $old_version,
@@ -83,11 +88,8 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		// Verifier l'integrite du dossier.
-		if ( ! $this->verify_directory_integrity( $plugin_dir ) ) {
-			$this->restore_emails();
-			$this->disable_maintenance_mode();
-
-			return array(
+		if ( ! $update_result && ! $this->verify_directory_integrity( $plugin_dir ) ) {
+			$update_result = array(
 				'status'      => 'error',
 				'code'        => 'directory_integrity_failed',
 				'old_version' => $old_version,
@@ -101,12 +103,8 @@ class WBoard_Connector_Remote_Updater {
 		$new_version = $this->get_plugin_version( $plugin_file );
 
 		// Verifier que la version a bien change.
-		if ( $new_version && $old_version && version_compare( $new_version, $old_version, '<=' ) ) {
-			$this->restore_emails();
-			$this->disable_maintenance_mode();
-			$this->cleanup_temp_backup( $slug, 'plugin' );
-
-			return array(
+		if ( ! $update_result && $new_version && $old_version && version_compare( $new_version, $old_version, '<=' ) ) {
+			$update_result = array(
 				'status'      => 'error',
 				'code'        => 'version_unchanged',
 				'old_version' => $old_version,
@@ -115,13 +113,21 @@ class WBoard_Connector_Remote_Updater {
 			);
 		}
 
-		// Reactiver le plugin si il etait actif avant la MAJ.
-		// Pour les self-updates, toujours forcer la reactivation :
-		// Plugin_Upgrader remplace les fichiers du plugin en cours d'execution
-		// et activate_plugin() peut echouer silencieusement.
-		$is_self_update = ( 'wboard-connector' === $slug );
+		// Succes.
+		if ( ! $update_result ) {
+			$update_result = array(
+				'status'      => 'success',
+				'code'        => 'updated',
+				'old_version' => $old_version,
+				'new_version' => $new_version,
+				'message'     => sprintf( 'Plugin mis a jour de %s vers %s.', $old_version, $new_version ),
+			);
+		}
 
-		if ( $was_active ) {
+		// Toujours reactiver si le plugin etait actif et que le dossier existe.
+		// Meme en cas d'erreur partielle (ex: loopback echoue derriere htpasswd),
+		// les fichiers ont pu etre remplaces avec succes.
+		if ( $was_active && is_dir( $plugin_dir ) ) {
 			wp_cache_delete( 'plugins', 'plugins' );
 
 			if ( $is_self_update || ! is_plugin_active( $plugin_file ) ) {
@@ -129,18 +135,12 @@ class WBoard_Connector_Remote_Updater {
 			}
 		}
 
-		// Succes : cleanup backup temp.
+		// Cleanup (toujours execute).
 		$this->cleanup_temp_backup( $slug, 'plugin' );
 		$this->restore_emails();
 		$this->disable_maintenance_mode();
 
-		return array(
-			'status'      => 'success',
-			'code'        => 'updated',
-			'old_version' => $old_version,
-			'new_version' => $new_version,
-			'message'     => sprintf( 'Plugin mis a jour de %s vers %s.', $old_version, $new_version ),
-		);
+		return $update_result;
 	}
 
 	/**
