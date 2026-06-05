@@ -115,14 +115,20 @@ class WBoard_Connector_Backup_Streamer {
 		$missing = array();
 
 		foreach ( $files as $relative_path => $absolute_path ) {
-			$size = @filesize( $absolute_path );
-			if ( false === $size ) {
+			$handle = @fopen( $absolute_path, 'rb' );
+			if ( false === $handle ) {
 				$missing[] = $relative_path;
 				continue;
 			}
 
-			$handle = @fopen( $absolute_path, 'rb' );
-			if ( false === $handle ) {
+			// On lit la taille via fstat() sur le handle ouvert plutot que filesize()
+			// qui peut renvoyer une valeur cachee/incoherente avec ce que fread va
+			// reellement pouvoir lire. C'est cette incoherence qui a deja provoque
+			// des "unexpected EOF" cote backup-manager.
+			$stat = @fstat( $handle );
+			$size = ( is_array( $stat ) && isset( $stat['size'] ) ) ? (int) $stat['size'] : false;
+			if ( false === $size ) {
+				fclose( $handle );
 				$missing[] = $relative_path;
 				continue;
 			}
@@ -132,17 +138,29 @@ class WBoard_Connector_Backup_Streamer {
 			echo $header; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
 			// Stream le contenu du fichier.
+			// Important : fread() retourne "" (string vide) a l'EOF, pas false.
+			// Si filesize() a renvoye une taille superieure a ce qui est reellement
+			// lisible (cache, fichier modifie, sparse...), il faut sortir et completer
+			// avec des zeros pour rester aligne avec le header tar annonce.
 			$remaining = $size;
 			while ( $remaining > 0 ) {
 				$chunk_size = min( $remaining, 8192 );
 				$chunk      = fread( $handle, $chunk_size );
-				if ( false === $chunk ) {
+				if ( false === $chunk || '' === $chunk ) {
 					break;
 				}
 				echo $chunk; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 				$remaining -= strlen( $chunk );
 			}
 			fclose( $handle );
+
+			// Si le fichier etait plus court que filesize() annonce, on bourre avec
+			// des zeros pour matcher la taille du header tar. Sinon le parseur tar
+			// cote backup-manager lit du contenu a la place du header suivant et
+			// l'archive entiere du batch est corrompue.
+			if ( $remaining > 0 ) {
+				echo str_repeat( "\0", $remaining ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			}
 
 			// Padding a 512 octets.
 			$padding = self::TAR_BLOCK_SIZE - ( $size % self::TAR_BLOCK_SIZE );
