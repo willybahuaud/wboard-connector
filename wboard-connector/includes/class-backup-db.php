@@ -202,6 +202,203 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
+	 * Gere la requete de streaming SQL direct d'UNE seule table.
+	 *
+	 * Body attendu :
+	 * {
+	 *   "name": "wp_postmeta",
+	 *   "batch_size": 2000  // optionnel
+	 * }
+	 *
+	 * Retourne le SQL brut (CREATE TABLE + INSERTs) en text/plain.
+	 * Pas de tar, pas de fichier temp : le SQL est emis au fil de l'eau, ligne par
+	 * ligne, avec flush() periodique pour maintenir la connexion vivante. C'est
+	 * crucial pour les grosses tables (postmeta...) qui sinon font crasher la
+	 * connexion par idle proxy / PHP-FPM.
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 * @param array           $config  La config backup.
+	 *
+	 * @return WP_REST_Response|WP_Error|void
+	 */
+	public function handle_stream_single_table( WP_REST_Request $request, array $config ) {
+		global $wpdb;
+
+		$body = json_decode( $request->get_body(), true );
+		$name = isset( $body['name'] ) ? $body['name'] : '';
+
+		if ( '' === $name || strpos( $name, $wpdb->prefix ) !== 0 ) {
+			return new WP_Error(
+				'wboard_backup_db_invalid_table',
+				__( 'Nom de table invalide.', 'wboard-connector' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		if ( ! preg_match( '/^[a-zA-Z0-9_]+$/', $name ) ) {
+			return new WP_Error(
+				'wboard_backup_db_invalid_table',
+				__( 'Nom de table invalide.', 'wboard-connector' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+		$exists = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s',
+				DB_NAME,
+				$name
+			)
+		);
+		if ( ! $exists ) {
+			return new WP_Error(
+				'wboard_backup_db_table_not_found',
+				__( 'Table introuvable.', 'wboard-connector' ),
+				array( 'status' => 404 )
+			);
+		}
+
+		// On (re)deduit la PK cote serveur pour ne pas accepter une PK fournie par le client.
+		$primary_key = $this->get_primary_key( $name );
+		$batch_size  = isset( $body['batch_size'] ) ? (int) $body['batch_size'] : self::DEFAULT_BATCH_SIZE;
+
+		$this->stream_single_table_to_response( $name, $primary_key, $batch_size );
+		exit;
+	}
+
+	/**
+	 * Stream le SQL d'une table directement dans la reponse HTTP.
+	 *
+	 * Format : "CREATE TABLE ...;\n\nINSERT ...;\nINSERT ...;\n..."
+	 * Aucun fichier temp, aucun tar : la connexion porte du trafic en permanence
+	 * (flush apres chaque batch) → le proxy ne coupe pas.
+	 *
+	 * @param string      $table       Nom de la table.
+	 * @param string|null $primary_key Colonne PK (null si pas de PK).
+	 * @param int         $batch_size  Lignes par requete SQL interne.
+	 *
+	 * @return void
+	 */
+	private function stream_single_table_to_response( $table, $primary_key, $batch_size ) {
+		global $wpdb;
+
+		while ( ob_get_level() > 0 ) {
+			ob_end_clean();
+		}
+
+		set_time_limit( 0 );
+
+		// Tente d'augmenter la memoire pour les grosses tables.
+		$current_limit = wp_convert_hr_to_bytes( ini_get( 'memory_limit' ) );
+		if ( $current_limit > 0 && $current_limit < 512 * 1024 * 1024 ) {
+			@ini_set( 'memory_limit', '512M' ); // phpcs:ignore WordPress.PHP.IniSet.memory_limit_Disallowed
+		}
+
+		header( 'Content-Type: application/sql; charset=utf-8' );
+		header( 'Content-Disposition: attachment; filename="' . $table . '.sql"' );
+		header( 'X-Accel-Buffering: no' ); // Desactive le buffering nginx s'il existe.
+
+		$batch_size = $this->adapt_batch_size( $batch_size );
+
+		// Header SQL : CREATE TABLE.
+		$create_table = $this->get_create_table_statement( $table );
+		if ( $create_table ) {
+			echo "-- Table: {$table}\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo "DROP TABLE IF EXISTS `{$table}`;\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			echo $create_table . ";\n\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			if ( function_exists( 'flush' ) ) {
+				flush();
+			}
+		}
+
+		// Boucle d'export streamee : MYSQLI_USE_RESULT (unbuffered) pour ne jamais
+		// charger un batch complet en memoire PHP.
+		$cursor     = 0;
+		$total_rows = 0;
+
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		error_log( sprintf( '[WBoard DB] Stream-table debut %s (pk=%s, batch=%d)', $table, $primary_key ?? 'null', $batch_size ) );
+
+		while ( true ) {
+			if ( method_exists( $wpdb, 'check_connection' ) ) {
+				$wpdb->check_connection();
+			}
+
+			if ( ! empty( $primary_key ) ) {
+				$sql = $wpdb->prepare(
+					"SELECT * FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d",
+					$cursor,
+					$batch_size
+				);
+			} else {
+				$sql = $wpdb->prepare(
+					"SELECT * FROM `{$table}` LIMIT %d OFFSET %d",
+					$batch_size,
+					$cursor
+				);
+			}
+
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
+			$result = $wpdb->dbh->query( $sql, MYSQLI_USE_RESULT );
+
+			if ( ! $result ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Stream-table erreur SQL %s curseur=%d : %s', $table, $cursor, $wpdb->last_error ) );
+				break;
+			}
+
+			$columns_str = null;
+			$batch_count = 0;
+
+			// phpcs:ignore WordPress.CodeAnalysis.AssignmentInCondition.FoundInWhileCondition
+			while ( $row = $result->fetch_assoc() ) {
+				if ( null === $columns_str ) {
+					$columns_escaped = array_map( array( $this, 'escape_column_name' ), array_keys( $row ) );
+					$columns_str     = implode( ', ', $columns_escaped );
+				}
+
+				$values = array();
+				foreach ( $row as $value ) {
+					if ( null === $value ) {
+						$values[] = 'NULL';
+					} else {
+						$values[] = "'" . $wpdb->dbh->real_escape_string( $value ) . "'";
+					}
+				}
+
+				echo "INSERT INTO `{$table}` ({$columns_str}) VALUES (" . implode( ', ', $values ) . ");\n"; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+				if ( ! empty( $primary_key ) && isset( $row[ $primary_key ] ) ) {
+					$cursor = (int) $row[ $primary_key ];
+				}
+
+				$batch_count++;
+			}
+
+			$result->free();
+
+			if ( empty( $primary_key ) ) {
+				$cursor += $batch_count;
+			}
+
+			$total_rows += $batch_count;
+
+			// Flush apres chaque batch : maintient la connexion active.
+			if ( function_exists( 'flush' ) ) {
+				flush();
+			}
+
+			if ( $batch_count < $batch_size ) {
+				break;
+			}
+		}
+
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+		error_log( sprintf( '[WBoard DB] Stream-table fini %s : %d lignes', $table, $total_rows ) );
+	}
+
+	/**
 	 * Stream toutes les tables en tar brut.
 	 *
 	 * Pour chaque table :

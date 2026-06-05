@@ -145,6 +145,19 @@ class WBoard_Connector_Backup {
 			)
 		);
 
+		// POST /wboard/v1/backup/db/stream-table — Stream le SQL d'UNE table directement.
+		// Pas de tar, pas de fichier temp : flux SQL continu pour eviter les coupures
+		// proxy/PHP-FPM sur les grosses tables (cf. postmeta).
+		register_rest_route(
+			self::API_NAMESPACE,
+			'/backup/db/stream-table',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_db_stream_table' ),
+				'permission_callback' => array( $this, 'check_backup_permission' ),
+			)
+		);
+
 		// GET /wboard/v1/backup/status — Statut du module backup.
 		register_rest_route(
 			self::API_NAMESPACE,
@@ -242,6 +255,19 @@ class WBoard_Connector_Backup {
 		$db = new WBoard_Connector_Backup_Db();
 
 		return $db->handle_stream_export( $request, $this->config );
+	}
+
+	/**
+	 * Delegue le streaming SQL d'une seule table au module DB.
+	 *
+	 * @param WP_REST_Request $request La requete REST.
+	 *
+	 * @return WP_REST_Response|WP_Error|void
+	 */
+	public function handle_db_stream_table( WP_REST_Request $request ) {
+		$db = new WBoard_Connector_Backup_Db();
+
+		return $db->handle_stream_single_table( $request, $this->config );
 	}
 
 	/**
