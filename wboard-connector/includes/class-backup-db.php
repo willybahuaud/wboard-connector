@@ -256,10 +256,25 @@ class WBoard_Connector_Backup_Db {
 
 			$this->export_full_table_to_file( $name, $pk, $batch_size, $sql_path );
 
-			$size = @filesize( $sql_path );
-			if ( false === $size || 0 === $size ) {
+			$handle = @fopen( $sql_path, 'rb' );
+			if ( false === $handle ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Table %s skippee : fopen echoue (pk=%s, batch=%d)', $name, $pk ?? 'null', $batch_size ) );
+				@unlink( $sql_path );
+				continue;
+			}
+
+			// Lecture de la taille via fstat() sur le handle ouvert (et pas filesize()
+			// qui peut renvoyer une valeur cachee/incoherente avec ce que fread va lire).
+			// La taille annoncee dans le header tar DOIT correspondre exactement au
+			// nombre d'octets emis dans le body, sinon le parser tar cote backup-manager
+			// se decale et l'archive entiere est corrompue.
+			$stat = @fstat( $handle );
+			$size = ( is_array( $stat ) && isset( $stat['size'] ) ) ? (int) $stat['size'] : 0;
+			if ( 0 === $size ) {
 				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 				error_log( sprintf( '[WBoard DB] Table %s skippee : fichier vide (pk=%s, batch=%d, memory=%s)', $name, $pk ?? 'null', $batch_size, size_format( memory_get_usage( true ) ) ) );
+				fclose( $handle );
 				@unlink( $sql_path );
 				continue;
 			}
@@ -267,19 +282,28 @@ class WBoard_Connector_Backup_Db {
 			// Header tar pour cette table.
 			echo $this->build_db_tar_header( $name . '.sql', $size ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 
-			// Stream le contenu du fichier SQL.
-			$handle = @fopen( $sql_path, 'rb' );
-			if ( false !== $handle ) {
-				while ( ! feof( $handle ) ) {
-					echo fread( $handle, 8192 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-					$size -= 8192;
+			// Stream le contenu : on lit exactement $size octets, sortie de boucle
+			// sur chunk vide ou false (EOF / erreur).
+			$remaining = $size;
+			while ( $remaining > 0 ) {
+				$chunk_size = min( $remaining, 8192 );
+				$chunk      = fread( $handle, $chunk_size );
+				if ( false === $chunk || '' === $chunk ) {
+					break;
 				}
-				fclose( $handle );
+				echo $chunk; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+				$remaining -= strlen( $chunk );
+			}
+			fclose( $handle );
+
+			// Si la lecture a ete plus courte que $size annonce, on bourre avec des
+			// zeros pour rester aligne avec le header tar (sinon batch DB corrompu).
+			if ( $remaining > 0 ) {
+				echo str_repeat( "\0", $remaining ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
 
-			// Padding tar a 512 octets.
-			$real_size = filesize( $sql_path );
-			$padding   = self::TAR_BLOCK_SIZE - ( $real_size % self::TAR_BLOCK_SIZE );
+			// Padding tar a 512 octets (base sur la taille annoncee, pas relue du FS).
+			$padding = self::TAR_BLOCK_SIZE - ( $size % self::TAR_BLOCK_SIZE );
 			if ( $padding < self::TAR_BLOCK_SIZE ) {
 				echo str_repeat( "\0", $padding ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			}
