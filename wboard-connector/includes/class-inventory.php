@@ -175,8 +175,9 @@ class WBoard_Connector_Inventory {
 					$children[ $entry ]     = $child;
 					$total_size            += isset( $child['size_bytes'] ) ? (int) $child['size_bytes'] : 0;
 					$file_count            += isset( $child['file_count'] ) ? (int) $child['file_count'] : 0;
-					if ( isset( $child['latest_mtime'] ) && $child['latest_mtime'] > $latest_mtime ) {
-						$latest_mtime = $child['latest_mtime'];
+					// On utilise _mtime_ts (int epoch) pour la comparaison, pas latest_mtime (string ISO).
+					if ( isset( $child['_mtime_ts'] ) && (int) $child['_mtime_ts'] > $latest_mtime ) {
+						$latest_mtime = (int) $child['_mtime_ts'];
 					}
 				} else {
 					// Au-dela de MAX_DEPTH on agrege juste sans exposer la structure.
@@ -209,10 +210,13 @@ class WBoard_Connector_Inventory {
 		$top_ext = array_slice( $extensions, 0, self::TOP_EXTENSIONS_LIMIT, true );
 
 		$result = array(
-			'size_bytes'  => $total_size,
-			'file_count'  => $file_count,
-			'dir_count'   => $dir_count,
-			'latest_mtime' => $latest_mtime > 0 ? gmdate( 'c', $latest_mtime ) : null,
+			'size_bytes'    => $total_size,
+			'file_count'    => $file_count,
+			'dir_count'     => $dir_count,
+			// latest_mtime : ISO 8601 pour conso humaine/Claude.
+			'latest_mtime'  => $latest_mtime > 0 ? gmdate( 'c', $latest_mtime ) : null,
+			// _mtime_ts : epoch int pour comparaison interne (recursion parent).
+			'_mtime_ts'     => $latest_mtime > 0 ? $latest_mtime : 0,
 			'top_extensions' => $top_ext,
 		);
 
