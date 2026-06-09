@@ -3,7 +3,7 @@
  * Plugin Name: WBoard Connector
  * Plugin URI: https://github.com/wboard/connector
  * Description: Connecteur pour WBoard - Permet la supervision centralisée du site WordPress.
- * Version: 2.2.5
+ * Version: 2.3.0
  * Requires at least: 6.0
  * Requires PHP: 7.3
  * Author: Willy bahuaud
@@ -22,7 +22,7 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Constantes du plugin.
  */
-define( 'WBOARD_CONNECTOR_VERSION', '2.2.5' );
+define( 'WBOARD_CONNECTOR_VERSION', '2.3.0' );
 define( 'WBOARD_CONNECTOR_FILE', __FILE__ );
 define( 'WBOARD_CONNECTOR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'WBOARD_CONNECTOR_URL', plugin_dir_url( __FILE__ ) );
@@ -71,6 +71,9 @@ function wboard_connector_init() {
 	// Module backup (isole, charge ses routes uniquement si active).
 	$backup = new WBoard_Connector_Backup( $security );
 
+	// Module inventaire (route /inventory pour suggestions d'exclusions backup).
+	$inventory = new WBoard_Connector_Inventory( $security );
+
 	// Enregistre les hooks.
 	$api->register_hooks();
 	$settings->register_hooks();
@@ -78,6 +81,7 @@ function wboard_connector_init() {
 	$test_session->register_hooks();
 	$updater->register_hooks();
 	$backup->register_hooks();
+	$inventory->register_hooks();
 }
 add_action( 'plugins_loaded', 'wboard_connector_init' );
 
