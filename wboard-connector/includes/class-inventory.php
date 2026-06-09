@@ -39,6 +39,50 @@ class WBoard_Connector_Inventory {
 	private const TOP_EXTENSIONS_LIMIT = 8;
 
 	/**
+	 * Plafond global du nombre de fichiers analyses lors d'un scan.
+	 *
+	 * Au-dela on coupe le scan pour eviter timeout (PHP 30s default) ou OOM
+	 * sur des sites avec 1M+ de fichiers. Le client (board) recoit un flag
+	 * truncated dans la reponse pour qu'il sache que les chiffres sont
+	 * partiels.
+	 *
+	 * @var int
+	 */
+	private const FILE_SCAN_MAX_FILES = 500000;
+
+	/**
+	 * Budget temps global du scan (secondes).
+	 *
+	 * Verifie a chaque entree de dossier. Si depasse, on abort proprement
+	 * avec truncated=true.
+	 *
+	 * @var float
+	 */
+	private const FILE_SCAN_MAX_DURATION = 25.0;
+
+	/**
+	 * Compteur global de fichiers analyses pendant un scan en cours.
+	 * Reset a chaque appel a get_inventory.
+	 *
+	 * @var int
+	 */
+	private $files_counted = 0;
+
+	/**
+	 * Timestamp de debut du scan en cours, pour le budget temps.
+	 *
+	 * @var float
+	 */
+	private $scan_started_at = 0.0;
+
+	/**
+	 * Flag truncated si on a abort en cours de route.
+	 *
+	 * @var bool
+	 */
+	private $scan_truncated = false;
+
+	/**
 	 * Instance Security pour la verif HMAC.
 	 *
 	 * @var WBoard_Connector_Security
@@ -99,18 +143,26 @@ class WBoard_Connector_Inventory {
 	 * @return WP_REST_Response
 	 */
 	public function get_inventory( WP_REST_Request $request ) {
-		$start = microtime( true );
+		// Reset des compteurs pour ce scan
+		$this->files_counted   = 0;
+		$this->scan_started_at = microtime( true );
+		$this->scan_truncated  = false;
+
+		$files  = $this->scan_files();
+		$tables = $this->scan_tables();
 
 		$data = array(
 			'plugin_version'   => defined( 'WBOARD_CONNECTOR_VERSION' ) ? WBOARD_CONNECTOR_VERSION : 'unknown',
 			'inventory_schema' => 1,
 			'generated_at'     => gmdate( 'c' ),
 			'wp_content_path'  => WP_CONTENT_DIR,
-			'files'            => $this->scan_files(),
-			'tables'           => $this->scan_tables(),
+			'truncated'        => $this->scan_truncated,
+			'files_counted'    => $this->files_counted,
+			'files'            => $files,
+			'tables'           => $tables,
 		);
 
-		$data['scan_duration_ms'] = (int) ( ( microtime( true ) - $start ) * 1000 );
+		$data['scan_duration_ms'] = (int) ( ( microtime( true ) - $this->scan_started_at ) * 1000 );
 
 		return new WP_REST_Response( $data, 200 );
 	}
@@ -161,6 +213,13 @@ class WBoard_Connector_Inventory {
 				continue;
 			}
 
+			// Budget global : si on a deja depasse le quota fichiers ou le
+			// budget temps, on coupe net pour eviter timeout / OOM.
+			if ( $this->is_budget_exhausted() ) {
+				$this->scan_truncated = true;
+				break;
+			}
+
 			$full = $path . DIRECTORY_SEPARATOR . $entry;
 
 			if ( is_link( $full ) ) {
@@ -196,6 +255,7 @@ class WBoard_Connector_Inventory {
 				$mtime       = (int) @filemtime( $full );
 				$total_size += $size;
 				$file_count++;
+				$this->files_counted++;
 				if ( $mtime > $latest_mtime ) {
 					$latest_mtime = $mtime;
 				}
@@ -244,6 +304,13 @@ class WBoard_Connector_Inventory {
 		$stack       = array( $root );
 
 		while ( ! empty( $stack ) ) {
+			// Verifie le budget avant chaque dossier (iteratif donc le check
+			// fonctionne meme avec un stack tres profond).
+			if ( $this->is_budget_exhausted() ) {
+				$this->scan_truncated = true;
+				break;
+			}
+
 			$current = array_pop( $stack );
 			$entries = @scandir( $current );
 			if ( false === $entries ) {
@@ -263,6 +330,7 @@ class WBoard_Connector_Inventory {
 				} elseif ( is_file( $full ) ) {
 					$size += (int) @filesize( $full );
 					$count++;
+					$this->files_counted++;
 					$m = (int) @filemtime( $full );
 					if ( $m > $latest ) {
 						$latest = $m;
@@ -276,6 +344,21 @@ class WBoard_Connector_Inventory {
 			'file_count'   => $count,
 			'latest_mtime' => $latest,
 		);
+	}
+
+	/**
+	 * Verifie si l'un des budgets (count fichiers ou temps) est depasse.
+	 *
+	 * @return bool
+	 */
+	private function is_budget_exhausted() {
+		if ( $this->files_counted >= self::FILE_SCAN_MAX_FILES ) {
+			return true;
+		}
+		if ( ( microtime( true ) - $this->scan_started_at ) >= self::FILE_SCAN_MAX_DURATION ) {
+			return true;
+		}
+		return false;
 	}
 
 	/**
