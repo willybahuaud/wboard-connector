@@ -162,7 +162,7 @@ class WBoard_Connector_Backup_Db {
 				continue;
 			}
 
-			if ( ! preg_match( '/^[a-zA-Z0-9_]+$/', $name ) ) {
+			if ( ! preg_match( '/^[a-zA-Z0-9_-]+$/', $name ) ) {
 				continue;
 			}
 
@@ -236,7 +236,7 @@ class WBoard_Connector_Backup_Db {
 			);
 		}
 
-		if ( ! preg_match( '/^[a-zA-Z0-9_]+$/', $name ) ) {
+		if ( ! preg_match( '/^[a-zA-Z0-9_-]+$/', $name ) ) {
 			return new WP_Error(
 				'wboard_backup_db_invalid_table',
 				__( 'Nom de table invalide.', 'wboard-connector' ),
@@ -938,7 +938,7 @@ class WBoard_Connector_Backup_Db {
 	 * SHOW CREATE TABLE n'accepte pas de placeholder prepare(),
 	 * mais le nom de table a ete valide par regex en amont.
 	 *
-	 * @param string $table Nom de la table (valide par regex /^[a-zA-Z0-9_]+$/).
+	 * @param string $table Nom de la table (valide par regex /^[a-zA-Z0-9_-]+$/).
 	 *
 	 * @return string|null Le CREATE TABLE ou null.
 	 */
