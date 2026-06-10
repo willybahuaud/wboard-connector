@@ -362,44 +362,25 @@ class WBoard_Connector_Inventory {
 	}
 
 	/**
-	 * Liste les tables de la BDD avec leur taille + nb lignes + moteur.
+	 * Liste les tables de la BDD pour l'inventaire (audit exclusions).
+	 *
+	 * Delegue l'introspection a la brique partagee et reshape le resultat
+	 * au format attendu par le board (size_bytes / data_bytes / index_bytes).
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
 	private function scan_tables() {
-		global $wpdb;
-
-		$db_name = $wpdb->dbname;
-		if ( empty( $db_name ) ) {
-			return array();
-		}
-
-		// Pas de prepare() sur SCHEMA car le nom de la DB ne vient pas d'input user
-		// mais de la config WP. On caste en string par precaution.
-		$sql = $wpdb->prepare(
-			'SELECT TABLE_NAME, DATA_LENGTH, INDEX_LENGTH, TABLE_ROWS, ENGINE
-			FROM information_schema.TABLES
-			WHERE TABLE_SCHEMA = %s
-			ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC',
-			$db_name
-		);
-
-		$rows = $wpdb->get_results( $sql, ARRAY_A );
-		if ( ! is_array( $rows ) ) {
-			return array();
-		}
+		$tables = WBoard_Connector_Db_Tables::inspect();
 
 		$out = array();
-		foreach ( $rows as $row ) {
-			$data_len  = (int) ( $row['DATA_LENGTH'] ?? 0 );
-			$index_len = (int) ( $row['INDEX_LENGTH'] ?? 0 );
-			$out[]     = array(
-				'name'         => (string) $row['TABLE_NAME'],
-				'size_bytes'   => $data_len + $index_len,
-				'data_bytes'   => $data_len,
-				'index_bytes'  => $index_len,
-				'rows'         => (int) ( $row['TABLE_ROWS'] ?? 0 ),
-				'engine'       => (string) ( $row['ENGINE'] ?? '' ),
+		foreach ( $tables as $t ) {
+			$out[] = array(
+				'name'        => $t['name'],
+				'size_bytes'  => $t['total_length'],
+				'data_bytes'  => $t['data_length'],
+				'index_bytes' => $t['index_length'],
+				'rows'        => $t['table_rows'],
+				'engine'      => $t['engine'],
 			);
 		}
 

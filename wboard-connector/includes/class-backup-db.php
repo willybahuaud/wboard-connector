@@ -71,7 +71,7 @@ class WBoard_Connector_Backup_Db {
 		$result  = array();
 
 		foreach ( $tables as $table ) {
-			$table_name = $table['table_name'];
+			$table_name = $table['name'];
 
 			// Filtre par prefixe WordPress (securite : on n'exporte pas les tables d'autres apps).
 			if ( strpos( $table_name, $prefix ) !== 0 ) {
@@ -90,13 +90,14 @@ class WBoard_Connector_Backup_Db {
 			$fingerprint = $this->build_fingerprint( $table );
 
 			$result[] = array(
-				'name'        => $table_name,
-				'rows'        => (int) $table['table_rows'],
-				'data_length' => (int) $table['data_length'],
-				'update_time' => $table['update_time'],
-				'fingerprint' => $fingerprint,
-				'primary_key' => $primary_key,
-				'has_pk'      => ! empty( $primary_key ),
+				'name'         => $table_name,
+				'rows'         => $table['table_rows'],
+				'data_length'  => $table['data_length'],
+				'index_length' => $table['index_length'],
+				'update_time'  => $table['update_time'],
+				'fingerprint'  => $fingerprint,
+				'primary_key'  => $primary_key,
+				'has_pk'       => ! empty( $primary_key ),
 			);
 		}
 
@@ -729,29 +730,12 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
-	 * Recupere les infos des tables via INFORMATION_SCHEMA.
+	 * Recupere les infos des tables via la brique partagee d'introspection.
 	 *
 	 * @return array Liste des tables avec metadata.
 	 */
 	private function get_tables_info() {
-		global $wpdb;
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$results = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT TABLE_NAME AS table_name,
-					TABLE_ROWS AS table_rows,
-					DATA_LENGTH AS data_length,
-					UPDATE_TIME AS update_time,
-					AUTO_INCREMENT AS auto_increment
-				FROM INFORMATION_SCHEMA.TABLES
-				WHERE TABLE_SCHEMA = %s",
-				DB_NAME
-			),
-			ARRAY_A
-		);
-
-		return $results ? $results : array();
+		return WBoard_Connector_Db_Tables::inspect();
 	}
 
 	/**
