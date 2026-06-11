@@ -63,12 +63,24 @@ class WBoard_Connector_Remote_Updater {
 		$plugin_dir = WP_PLUGIN_DIR . '/' . dirname( $plugin_file );
 		$this->backup_to_temp( $slug, $plugin_dir, 'plugin' );
 
-		// Executer la MAJ.
+		// Executer la MAJ via bulk_upgrade() et non upgrade() :
+		// upgrade() desactive silencieusement le plugin (filtre
+		// deactivate_plugin_before_upgrade) et compte sur l'appelant pour le
+		// reactiver — fragile en self-update (le connector peut rester inactif).
+		// bulk_upgrade() ne touche jamais a active_plugins : il passe par le
+		// mode maintenance. C'est le comportement de wp_ajax_update_plugin()
+		// dans le core (shiny updates).
 		ob_start();
 		$skin     = new WP_Ajax_Upgrader_Skin();
 		$upgrader = new Plugin_Upgrader( $skin );
-		$result   = $upgrader->upgrade( $plugin_file );
+		$bulk     = $upgrader->bulk_upgrade( array( $plugin_file ) );
 		ob_end_clean();
+
+		// bulk_upgrade() retourne false si la connexion filesystem echoue,
+		// sinon un tableau indexe par plugin file.
+		$result = is_array( $bulk ) && array_key_exists( $plugin_file, $bulk )
+			? $bulk[ $plugin_file ]
+			: false;
 
 		// Collecter le resultat sans return premature.
 		// La reactivation et le cleanup se font toujours a la fin.
