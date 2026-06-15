@@ -316,10 +316,14 @@ class WBoard_Connector_Backup_Scanner {
 	/**
 	 * Verifie si un chemin relatif est dans un repertoire exclu.
 	 *
-	 * Supporte deux modes :
-	 * - Nom exact : "updraft" exclut tout repertoire nomme "updraft" a n'importe quel niveau
-	 * - Glob avec * : "*cache*" ne teste que le premier niveau sous wp-content
-	 *   (evite d'exclure des plugins entiers comme wp-super-cache)
+	 * Le match se fait toujours sur le premier segment du chemin (enfant direct
+	 * de wp-content). Un nom comme "upgrade" exclut wp-content/upgrade/ mais
+	 * pas wp-content/plugins/elementor/core/upgrade/ — cf. l'intention de
+	 * DEFAULT_EXCLUDED_DIRS ("Repertoires exclus par defaut dans wp-content/").
+	 *
+	 * Modes supportes :
+	 * - Nom exact  : "updraft" matche "updraft/..."
+	 * - Glob avec *: "*cache*" matche tout premier segment contenant "cache"
 	 *
 	 * @param string $relative_path Le chemin relatif depuis wp-content/.
 	 * @param array  $excluded_dirs Les repertoires exclus.
@@ -329,16 +333,13 @@ class WBoard_Connector_Backup_Scanner {
 	private function is_dir_excluded( $relative_path, array $excluded_dirs ) {
 		foreach ( $excluded_dirs as $excluded ) {
 			if ( strpos( $excluded, '*' ) !== false ) {
-				// Mode glob : on teste chaque segment du chemin.
+				// Mode glob : on teste le premier segment du chemin.
 				if ( $this->matches_glob_segment( $relative_path, $excluded ) ) {
 					return true;
 				}
 			} else {
-				// Mode exact : match du segment complet.
+				// Mode exact : match du premier segment uniquement.
 				if ( strpos( $relative_path, $excluded . '/' ) === 0 ) {
-					return true;
-				}
-				if ( strpos( $relative_path, '/' . $excluded . '/' ) !== false ) {
 					return true;
 				}
 			}
