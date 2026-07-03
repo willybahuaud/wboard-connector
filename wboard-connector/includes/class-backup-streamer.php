@@ -194,15 +194,67 @@ class WBoard_Connector_Backup_Streamer {
 	 * @return string Header tar de 512 octets.
 	 */
 	private function build_tar_header( $name, $size ) {
-		// Header tar : 512 octets, rempli de zeros.
-		$header = str_repeat( "\0", self::TAR_BLOCK_SIZE );
+		$prefix = '';
+		$blocks = '';
 
 		// USTAR : si le chemin depasse 100 chars, on split en prefix (155) + name (100).
 		// Go archive/tar reconstruit automatiquement prefix + "/" + name.
-		$prefix = '';
 		if ( strlen( $name ) > 100 ) {
-			list( $prefix, $name ) = $this->split_tar_path( $name );
+			list( $prefix, $short_name ) = $this->split_tar_path( $name );
+
+			if ( '' === $prefix ) {
+				// Insplittable en USTAR : le basename seul depasse 100 chars
+				// (ou le chemin depasse 255). On prefixe d'une entree GNU
+				// LongLink (typeflag 'L') portant le chemin complet — Go
+				// archive/tar la lit nativement et ignore le name tronque
+				// du header suivant. Sans ca, le fichier arrive sous un nom
+				// tronque et le backup-manager le compte "manquant".
+				$blocks .= $this->build_gnu_longname_entry( $name );
+			}
+
+			$name = $short_name;
 		}
+
+		return $blocks . $this->build_header_block( $name, $prefix, $size, '0' );
+	}
+
+	/**
+	 * Construit une entree GNU LongLink complete (header + data + padding)
+	 * portant le chemin reel d'un fichier trop long pour USTAR.
+	 *
+	 * @param string $path Chemin complet du fichier suivant.
+	 *
+	 * @return string Blocs tar de l'entree LongLink.
+	 */
+	private function build_gnu_longname_entry( $path ) {
+		// Convention GNU tar : le contenu inclut un NUL terminal.
+		$data = $path . "\0";
+		$size = strlen( $data );
+
+		$entry  = $this->build_header_block( '././@LongLink', '', $size, 'L' );
+		$entry .= $data;
+
+		$padding = self::TAR_BLOCK_SIZE - ( $size % self::TAR_BLOCK_SIZE );
+		if ( $padding < self::TAR_BLOCK_SIZE ) {
+			$entry .= str_repeat( "\0", $padding );
+		}
+
+		return $entry;
+	}
+
+	/**
+	 * Construit un bloc header tar de 512 octets.
+	 *
+	 * @param string $name     Champ name (max 100 chars).
+	 * @param string $prefix   Champ prefix USTAR (max 155 chars).
+	 * @param int    $size     Taille du contenu en octets.
+	 * @param string $typeflag Type d'entree ('0' fichier regulier, 'L' GNU longname).
+	 *
+	 * @return string Header tar de 512 octets.
+	 */
+	private function build_header_block( $name, $prefix, $size, $typeflag ) {
+		// Header tar : 512 octets, rempli de zeros.
+		$header = str_repeat( "\0", self::TAR_BLOCK_SIZE );
 
 		// Champs du header tar POSIX/USTAR.
 		// name : 0-99 (100 bytes).
@@ -223,8 +275,8 @@ class WBoard_Connector_Backup_Streamer {
 		// mtime : 136-147 (12 bytes, octal).
 		$header = $this->write_field( $header, 136, sprintf( '%011o', time() ), 12 );
 
-		// typeflag : 156 (1 byte) — '0' = fichier regulier.
-		$header[156] = '0';
+		// typeflag : 156 (1 byte).
+		$header[156] = $typeflag;
 
 		// magic : 257-262 (6 bytes) — "ustar\0" pour USTAR format.
 		$header = $this->write_field( $header, 257, "ustar\0", 6 );
@@ -291,7 +343,9 @@ class WBoard_Connector_Backup_Streamer {
 			);
 		}
 
-		// Fallback : chemin trop long meme avec USTAR (> 255 chars), on tronque.
+		// Insplittable (basename > 100 chars ou chemin > 255) : prefix vide,
+		// name tronque. Le caller emet alors une entree GNU LongLink avec le
+		// chemin complet — le name tronque n'est qu'un fallback d'affichage.
 		return array( '', substr( $path, 0, 100 ) );
 	}
 
