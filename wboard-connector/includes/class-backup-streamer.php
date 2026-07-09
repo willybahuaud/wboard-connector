@@ -408,8 +408,11 @@ class WBoard_Connector_Backup_Streamer {
 		foreach ( $files as $relative_path ) {
 			$relative_path = ltrim( $relative_path, '/' );
 
-			// Protection path traversal.
-			if ( strpos( $relative_path, '..' ) !== false ) {
+			// Protection path traversal : ".." doit etre un segment complet du
+			// chemin pour etre dangereux. Un strpos naif rejetait a tort les
+			// fichiers legitimes contenant ".." dans leur nom (ex: "photo..png").
+			// Le realpath() + verif de prefixe plus bas reste la barriere finale.
+			if ( in_array( '..', explode( '/', $relative_path ), true ) ) {
 				continue;
 			}
 
