@@ -56,9 +56,6 @@ class WBoard_Connector_Remote_Updater {
 		$was_network_active = is_multisite() && is_plugin_active_for_network( $plugin_file );
 		$is_self_update     = ( 'wboard-connector' === $slug );
 
-		// Couper les emails de notification.
-		$this->silence_emails();
-
 		// Backup pre-update.
 		$plugin_dir = WP_PLUGIN_DIR . '/' . dirname( $plugin_file );
 		$this->backup_to_temp( $slug, $plugin_dir, 'plugin' );
@@ -149,7 +146,6 @@ class WBoard_Connector_Remote_Updater {
 
 		// Cleanup (toujours execute).
 		$this->cleanup_temp_backup( $slug, 'plugin' );
-		$this->restore_emails();
 		$this->disable_maintenance_mode();
 
 		return $update_result;
@@ -179,8 +175,6 @@ class WBoard_Connector_Remote_Updater {
 
 		$old_version = $this->get_theme_version( $slug );
 
-		$this->silence_emails();
-
 		// Backup pre-update.
 		$theme_dir = get_theme_root() . '/' . $slug;
 		$this->backup_to_temp( $slug, $theme_dir, 'theme' );
@@ -195,7 +189,6 @@ class WBoard_Connector_Remote_Updater {
 		$error = $this->check_upgrade_result( $result, $skin );
 
 		if ( $error ) {
-			$this->restore_emails();
 			$this->disable_maintenance_mode();
 			$this->cleanup_temp_backup( $slug, 'theme' );
 
@@ -209,7 +202,6 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		if ( ! $this->verify_directory_integrity( $theme_dir ) ) {
-			$this->restore_emails();
 			$this->disable_maintenance_mode();
 
 			return array(
@@ -226,7 +218,6 @@ class WBoard_Connector_Remote_Updater {
 		$new_version = $this->get_theme_version( $slug );
 
 		if ( $new_version && $old_version && version_compare( $new_version, $old_version, '<=' ) ) {
-			$this->restore_emails();
 			$this->disable_maintenance_mode();
 			$this->cleanup_temp_backup( $slug, 'theme' );
 
@@ -240,7 +231,6 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		$this->cleanup_temp_backup( $slug, 'theme' );
-		$this->restore_emails();
 		$this->disable_maintenance_mode();
 
 		return array(
@@ -306,32 +296,6 @@ class WBoard_Connector_Remote_Updater {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Coupe les filtres d'email WordPress pendant la MAJ.
-	 *
-	 * Evite les notifications intempestives lors des MAJ declenchees par le board.
-	 *
-	 * @return void
-	 */
-	private function silence_emails() {
-		add_filter( 'auto_core_update_send_email', '__return_false' );
-		add_filter( 'auto_plugin_update_send_email', '__return_false' );
-		add_filter( 'auto_theme_update_send_email', '__return_false' );
-		add_filter( 'send_core_update_notification_email', '__return_false' );
-	}
-
-	/**
-	 * Restaure les filtres d'email WordPress.
-	 *
-	 * @return void
-	 */
-	private function restore_emails() {
-		remove_filter( 'auto_core_update_send_email', '__return_false' );
-		remove_filter( 'auto_plugin_update_send_email', '__return_false' );
-		remove_filter( 'auto_theme_update_send_email', '__return_false' );
-		remove_filter( 'send_core_update_notification_email', '__return_false' );
 	}
 
 	/**

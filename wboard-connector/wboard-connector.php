@@ -67,6 +67,7 @@ function wboard_connector_init() {
 	$autologin    = new WBoard_Connector_Autologin();
 	$test_session = new WBoard_Connector_Test_Session();
 	$updater      = new WBoard_Connector_Updater();
+	$policy       = new WBoard_Connector_Update_Policy();
 
 	// Module backup (isole, charge ses routes uniquement si active).
 	$backup = new WBoard_Connector_Backup( $security );
@@ -80,6 +81,7 @@ function wboard_connector_init() {
 	$autologin->register_hooks();
 	$test_session->register_hooks();
 	$updater->register_hooks();
+	$policy->register_hooks();
 	$backup->register_hooks();
 	$inventory->register_hooks();
 }
