@@ -1,8 +1,8 @@
 <?php
 /**
- * Classe de mise a jour a distance des plugins et themes.
+ * Classe de mise a jour a distance des plugins, themes et du core.
  *
- * Permet au board de declencher les MAJ de plugins/themes
+ * Permet au board de declencher les MAJ de plugins/themes/core
  * via l'API REST sans connexion au back-office WordPress.
  *
  * @package WBoard_Connector
@@ -240,6 +240,123 @@ class WBoard_Connector_Remote_Updater {
 			'new_version' => $new_version,
 			'message'     => sprintf( 'Theme mis a jour de %s vers %s.', $old_version, $new_version ),
 		);
+	}
+
+	/**
+	 * Met a jour le core WordPress vers la derniere version disponible.
+	 *
+	 * Pas de backup_to_temp ici : le core est trop volumineux, c'est au
+	 * board de declencher un backup complet avant la MAJ si besoin.
+	 *
+	 * @return array Resultat de la MAJ avec status, code, versions, message.
+	 */
+	public function update_core() {
+		// Empecher PHP de s'arreter si le board ferme la connexion
+		// avant la fin (timeout HTTP). Une MAJ core peut etre longue.
+		ignore_user_abort( true );
+
+		if ( function_exists( 'set_time_limit' ) ) {
+			set_time_limit( 300 );
+		}
+
+		$this->load_upgrader_dependencies();
+		require_once ABSPATH . 'wp-admin/includes/update.php';
+
+		$old_version = $this->get_installed_core_version();
+
+		// Forcer le rafraichissement des offres de MAJ core.
+		wp_version_check( array(), true );
+		$update = $this->find_core_upgrade_offer();
+
+		if ( ! $update ) {
+			return array(
+				'status'      => 'error',
+				'code'        => 'no_update_available',
+				'old_version' => $old_version,
+				'new_version' => null,
+				'message'     => sprintf( 'Aucune mise a jour core disponible (version actuelle : %s).', $old_version ),
+			);
+		}
+
+		ob_start();
+		$skin     = new WP_Ajax_Upgrader_Skin();
+		$upgrader = new Core_Upgrader( $skin );
+		$result   = $upgrader->upgrade( $update );
+		ob_end_clean();
+
+		$this->disable_maintenance_mode();
+
+		if ( is_wp_error( $result ) ) {
+			return array(
+				'status'      => 'error',
+				'code'        => 'wp_error_' . $result->get_error_code(),
+				'old_version' => $old_version,
+				'new_version' => null,
+				'message'     => $result->get_error_message(),
+			);
+		}
+
+		// La constante $wp_version en memoire est perimee apres la MAJ :
+		// relire la version installee depuis version.php.
+		$new_version = $this->get_installed_core_version();
+
+		if ( $new_version && $old_version && version_compare( $new_version, $old_version, '<=' ) ) {
+			return array(
+				'status'      => 'error',
+				'code'        => 'version_unchanged',
+				'old_version' => $old_version,
+				'new_version' => $new_version,
+				'message'     => sprintf( 'La version n\'a pas change (toujours %s).', $old_version ),
+			);
+		}
+
+		return array(
+			'status'      => 'success',
+			'code'        => 'updated',
+			'old_version' => $old_version,
+			'new_version' => $new_version,
+			'message'     => sprintf( 'Core mis a jour de %s vers %s.', $old_version, $new_version ),
+		);
+	}
+
+	/**
+	 * Trouve la meilleure offre de MAJ core ("upgrade") pour la locale du site.
+	 *
+	 * @return object|false L'offre de MAJ ou false si le site est a jour.
+	 */
+	private function find_core_upgrade_offer() {
+		$updates = get_core_updates( array( 'dismissed' => false ) );
+
+		if ( ! is_array( $updates ) ) {
+			return false;
+		}
+
+		foreach ( $updates as $update ) {
+			if ( isset( $update->response ) && 'upgrade' === $update->response ) {
+				return $update;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Lit la version core reellement installee sur le disque.
+	 *
+	 * @return string|null La version installee ou null si illisible.
+	 */
+	private function get_installed_core_version() {
+		$version_file = ABSPATH . WPINC . '/version.php';
+
+		if ( ! is_readable( $version_file ) ) {
+			return null;
+		}
+
+		// include dans un scope local : version.php ne definit que des variables.
+		$wp_version = null;
+		include $version_file;
+
+		return $wp_version;
 	}
 
 	/**

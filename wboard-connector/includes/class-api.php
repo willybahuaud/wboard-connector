@@ -88,7 +88,7 @@ class WBoard_Connector_Api {
 			)
 		);
 
-		// POST /wboard/v1/update-component - Met à jour un plugin ou thème.
+		// POST /wboard/v1/update-component - Met à jour un plugin, thème ou le core.
 		register_rest_route(
 			self::API_NAMESPACE,
 			'/update-component',
@@ -223,9 +223,9 @@ class WBoard_Connector_Api {
 	}
 
 	/**
-	 * Met à jour un plugin ou thème à distance.
+	 * Met à jour un plugin, un thème ou le core à distance.
 	 *
-	 * Reçoit le type (plugin/theme) et le slug du composant,
+	 * Reçoit le type (plugin/theme/core) et le slug du composant,
 	 * puis délègue à WBoard_Connector_Remote_Updater.
 	 *
 	 * @param WP_REST_Request $request La requête REST avec type et slug.
@@ -249,12 +249,12 @@ class WBoard_Connector_Api {
 			);
 		}
 
-		if ( ! in_array( $type, array( 'plugin', 'theme' ), true ) ) {
+		if ( ! in_array( $type, array( 'plugin', 'theme', 'core' ), true ) ) {
 			return new WP_REST_Response(
 				array(
 					'status'  => 'error',
 					'code'    => 'invalid_type',
-					'message' => 'Le type doit être "plugin" ou "theme".',
+					'message' => 'Le type doit être "plugin", "theme" ou "core".',
 				),
 				400
 			);
@@ -274,7 +274,9 @@ class WBoard_Connector_Api {
 
 		$updater = new WBoard_Connector_Remote_Updater();
 
-		if ( 'plugin' === $type ) {
+		if ( 'core' === $type ) {
+			$result = $updater->update_core();
+		} elseif ( 'plugin' === $type ) {
 			$result = $updater->update_plugin( $slug );
 		} else {
 			$result = $updater->update_theme( $slug );
