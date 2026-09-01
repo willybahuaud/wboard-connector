@@ -47,6 +47,52 @@ class WBoard_Connector_Api {
 	 */
 	public function register_hooks() {
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+		add_filter( 'rest_authentication_errors', array( $this, 'bypass_core_auth_errors' ), 999 );
+	}
+
+	/**
+	 * Neutralise les erreurs d'authentification core pour les requêtes WBoard.
+	 *
+	 * Sur les sites protégés par htpasswd, Apache peut transmettre le header
+	 * "Authorization: Basic" à PHP. WordPress l'interprète alors comme une
+	 * tentative d'Application Password et rejette la requête en 401
+	 * (invalid_username) avant même d'atteindre nos routes. Les requêtes du
+	 * board étant authentifiées par signature HMAC (permission_callback),
+	 * on écarte ici l'erreur d'auth core pour ne pas les bloquer.
+	 *
+	 * @param WP_Error|true|null $result Résultat d'authentification courant.
+	 *
+	 * @return WP_Error|true|null
+	 */
+	public function bypass_core_auth_errors( $result ) {
+		if ( ! is_wp_error( $result ) ) {
+			return $result;
+		}
+
+		if ( ! $this->is_wboard_request() ) {
+			return $result;
+		}
+
+		// Uniquement si la requête porte une signature HMAC : la vérification
+		// réelle reste assurée par check_permission() sur chaque route.
+		if ( empty( $_SERVER['HTTP_X_WBOARD_SIGNATURE'] ) ) {
+			return $result;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Détermine si la requête courante cible l'API WBoard.
+	 *
+	 * @return bool
+	 */
+	private function is_wboard_request() {
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		$rest_route  = isset( $_GET['rest_route'] ) ? wp_unslash( $_GET['rest_route'] ) : '';
+
+		return false !== strpos( $request_uri, self::API_NAMESPACE )
+			|| false !== strpos( $rest_route, self::API_NAMESPACE );
 	}
 
 	/**
