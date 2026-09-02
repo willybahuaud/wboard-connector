@@ -113,10 +113,11 @@ class WBoard_Connector_Backup_Scanner {
 		$excluded_files      = $this->merge_excluded_files( $exclusions, $config );
 		$excluded_extensions = $this->merge_excluded_extensions( $exclusions );
 
-		$manifest_lines = array();
-		$current_index  = 0;
-		$files_scanned  = 0;
-		$is_complete    = true;
+		$manifest_lines   = array();
+		$current_index    = 0;
+		$files_scanned    = 0;
+		$files_unportable = 0;
+		$is_complete      = true;
 
 		try {
 			$iterator = $this->create_iterator( $scan_dir );
@@ -174,6 +175,22 @@ class WBoard_Connector_Backup_Scanner {
 					continue;
 				}
 
+				// Les noms non-UTF8 (typiquement latin1 sur le FS) ne survivent
+				// pas au round-trip JSON scan → manager → stream : la substitution
+				// d'encodage (wp_json_encode cote PHP, U+FFFD cote Go) produit un
+				// nom qui ne matche plus jamais le fichier sur disque. Resultat
+				// observe (aquilogia, 08-09/2026) : fichiers redemandes chaque
+				// nuit, jamais streames, backup "partial" a vie. On les ecarte du
+				// manifeste et on les compte dans les stats pour rester visibles.
+				if ( ! preg_match( '//u', $relative_path ) ) {
+					$files_unportable++;
+					if ( $files_unportable <= 20 ) {
+						error_log( sprintf( '[WBoard Backup] Nom de fichier non-UTF8, exclu du backup : %s', $relative_path ) );
+					}
+					$current_index++;
+					continue;
+				}
+
 				$mtime = $file->getMTime();
 				$size  = $file->getSize();
 
@@ -210,9 +227,10 @@ class WBoard_Connector_Backup_Scanner {
 				'cursor'   => $current_index,
 				'complete' => $is_complete,
 				'stats'    => array(
-					'files_scanned' => $files_scanned,
-					'duration'      => time() - $start_time,
-					'scan_dir'      => $scan_dir,
+					'files_scanned'    => $files_scanned,
+					'files_unportable' => $files_unportable,
+					'duration'         => time() - $start_time,
+					'scan_dir'         => $scan_dir,
 				),
 				'meta'     => array(
 					'wp_version'  => get_bloginfo( 'version' ),
