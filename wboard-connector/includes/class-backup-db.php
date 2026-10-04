@@ -953,6 +953,8 @@ class WBoard_Connector_Backup_Db {
 	private function get_cursor_column( $table_name ) {
 		global $wpdb;
 
+		// Schema et table repetes en constantes cote COLUMNS : sans ca, MySQL 5.7
+		// ouvre toutes les tables du schema pour resoudre la jointure.
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 		$pk_columns = $wpdb->get_results(
 			$wpdb->prepare(
@@ -964,7 +966,11 @@ class WBoard_Connector_Backup_Db {
 					AND c.COLUMN_NAME = k.COLUMN_NAME
 				WHERE k.TABLE_SCHEMA = %s
 					AND k.TABLE_NAME = %s
-					AND k.CONSTRAINT_NAME = 'PRIMARY'",
+					AND k.CONSTRAINT_NAME = 'PRIMARY'
+					AND c.TABLE_SCHEMA = %s
+					AND c.TABLE_NAME = %s",
+				DB_NAME,
+				$table_name,
 				DB_NAME,
 				$table_name
 			),
