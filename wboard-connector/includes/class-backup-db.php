@@ -68,6 +68,16 @@ class WBoard_Connector_Backup_Db {
 	const MIN_FREE_DISK_BYTES = 536870912;
 
 	/**
+	 * Header HTTP annoncant que chaque dump complet se termine par un trailer.
+	 *
+	 * Permet au backup-manager d'exiger le trailer sans comparer de versions :
+	 * sans ce header (plugins < 2.4.3), il garde son comportement historique.
+	 *
+	 * @var string
+	 */
+	const TRAILER_HEADER = 'X-WBoard-Dump-Trailer: 1';
+
+	/**
 	 * Gere la requete de listing des tables.
 	 *
 	 * Retourne la liste des tables du site avec empreintes
@@ -317,6 +327,7 @@ class WBoard_Connector_Backup_Db {
 		header( 'Content-Type: application/sql; charset=utf-8' );
 		header( 'Content-Disposition: attachment; filename="' . $table . '.sql"' );
 		header( 'X-Accel-Buffering: no' ); // Desactive le buffering nginx s'il existe.
+		header( self::TRAILER_HEADER );
 
 		$batch_size = $this->adapt_batch_size( $batch_size );
 
@@ -335,6 +346,7 @@ class WBoard_Connector_Backup_Db {
 		// charger un batch complet en memoire PHP.
 		$cursor     = null;
 		$total_rows = 0;
+		$complete   = false;
 
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 		error_log( sprintf( '[WBoard DB] Stream-table debut %s (pk=%s, batch=%d)', $table, $primary_key ?? 'null', $batch_size ) );
@@ -404,12 +416,20 @@ class WBoard_Connector_Backup_Db {
 			}
 
 			if ( $batch_count < $batch_size ) {
+				$complete = true;
 				break;
 			}
 		}
 
+		if ( $complete ) {
+			echo $this->build_dump_trailer( $table, $total_rows ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			if ( function_exists( 'flush' ) ) {
+				flush();
+			}
+		}
+
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		error_log( sprintf( '[WBoard DB] Stream-table fini %s : %d lignes', $table, $total_rows ) );
+		error_log( sprintf( '[WBoard DB] Stream-table fini %s : %d lignes (complet=%s)', $table, $total_rows, $complete ? 'oui' : 'non' ) );
 	}
 
 	/**
@@ -444,6 +464,7 @@ class WBoard_Connector_Backup_Db {
 
 		header( 'Content-Type: application/x-tar' );
 		header( 'X-WBoard-Tables-Count: ' . count( $tables ) );
+		header( self::TRAILER_HEADER );
 
 		$temp_dir = self::ensure_temp_dir();
 		if ( is_wp_error( $temp_dir ) ) {
@@ -612,6 +633,10 @@ class WBoard_Connector_Backup_Db {
 			}
 		}
 
+		if ( $complete ) {
+			fwrite( $handle, $this->build_dump_trailer( $table, $total_rows ) );
+		}
+
 		fclose( $handle );
 
 		$final_size = @filesize( $file_path );
@@ -619,6 +644,22 @@ class WBoard_Connector_Backup_Db {
 		error_log( sprintf( '[WBoard DB] Export %s : %d lignes, %d octets (pk=%s, batch=%d, complet=%s)', $table, $total_rows, $final_size, $primary_key ?? 'null', $batch_size, $complete ? 'oui' : 'non' ) );
 
 		return $complete;
+	}
+
+	/**
+	 * Construit le trailer qui clot un dump complet.
+	 *
+	 * Derniere ligne du dump, ecrite uniquement si l'export est alle au bout :
+	 * son absence signale un dump tronque (erreur SQL, fatal PHP, garde-fou).
+	 * C'est un commentaire SQL, ignore a la restauration.
+	 *
+	 * @param string $table Nom de la table.
+	 * @param int    $rows  Nombre de lignes exportees.
+	 *
+	 * @return string La ligne de trailer.
+	 */
+	private function build_dump_trailer( $table, $rows ) {
+		return sprintf( "-- WBoard dump complete: table=%s rows=%d\n", $table, $rows );
 	}
 
 	/**
