@@ -931,13 +931,6 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
-	 * Types SQL utilisables comme curseur de pagination.
-	 *
-	 * @var string[]
-	 */
-	const CURSOR_COLUMN_TYPES = array( 'tinyint', 'smallint', 'mediumint', 'int', 'bigint' );
-
-	/**
 	 * Retourne la colonne utilisable comme curseur de pagination d'une table.
 	 *
 	 * La pagination `WHERE pk > N` n'est fiable que sur une PK entiere et
@@ -946,6 +939,10 @@ class WBoard_Connector_Backup_Db {
 	 * pas unique (lignes sautees a chaque frontiere de batch). Dans ces cas on
 	 * retourne null et l'export pagine par OFFSET.
 	 *
+	 * Passe par SHOW COLUMNS plutot qu'INFORMATION_SCHEMA : appelee pour chaque
+	 * table du site, une jointure I_S coute plusieurs centaines de ms par table
+	 * sur certains hebergements.
+	 *
 	 * @param string $table_name Nom de la table.
 	 *
 	 * @return string|null Le nom de la colonne, ou null si pagination par OFFSET.
@@ -953,39 +950,40 @@ class WBoard_Connector_Backup_Db {
 	private function get_cursor_column( $table_name ) {
 		global $wpdb;
 
-		// Schema et table repetes en constantes cote COLUMNS : sans ca, MySQL 5.7
-		// ouvre toutes les tables du schema pour resoudre la jointure.
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$pk_columns = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT k.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type
-				FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
-				INNER JOIN INFORMATION_SCHEMA.COLUMNS c
-					ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
-					AND c.TABLE_NAME = k.TABLE_NAME
-					AND c.COLUMN_NAME = k.COLUMN_NAME
-				WHERE k.TABLE_SCHEMA = %s
-					AND k.TABLE_NAME = %s
-					AND k.CONSTRAINT_NAME = 'PRIMARY'
-					AND c.TABLE_SCHEMA = %s
-					AND c.TABLE_NAME = %s",
-				DB_NAME,
-				$table_name,
-				DB_NAME,
-				$table_name
-			),
-			ARRAY_A
-		);
+		// SHOW COLUMNS n'accepte pas de placeholder : on neutralise les backticks
+		// (le listing passe des noms lus en base, pas encore valides par regex).
+		$escaped_table = str_replace( '`', '``', $table_name );
 
-		if ( ! is_array( $pk_columns ) || 1 !== count( $pk_columns ) ) {
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$columns = $wpdb->get_results( "SHOW COLUMNS FROM `{$escaped_table}`", ARRAY_A );
+
+		if ( ! is_array( $columns ) ) {
 			return null;
 		}
 
-		if ( ! in_array( strtolower( $pk_columns[0]['data_type'] ), self::CURSOR_COLUMN_TYPES, true ) ) {
+		$pk_columns = array_values( array_filter( $columns, array( $this, 'is_primary_key_column' ) ) );
+
+		if ( 1 !== count( $pk_columns ) ) {
 			return null;
 		}
 
-		return $pk_columns[0]['column_name'];
+		// Type au format "bigint(20) unsigned" : seuls les entiers sont paginables.
+		if ( ! preg_match( '/^(tinyint|smallint|mediumint|int|bigint)\b/i', $pk_columns[0]['Type'] ) ) {
+			return null;
+		}
+
+		return $pk_columns[0]['Field'];
+	}
+
+	/**
+	 * Indique si une colonne (ligne de SHOW COLUMNS) fait partie de la cle primaire.
+	 *
+	 * @param array $column Ligne de SHOW COLUMNS.
+	 *
+	 * @return bool True si la colonne appartient a la PK.
+	 */
+	private function is_primary_key_column( $column ) {
+		return isset( $column['Key'] ) && 'PRI' === $column['Key'];
 	}
 
 	/**
