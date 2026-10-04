@@ -50,6 +50,24 @@ class WBoard_Connector_Backup_Db {
 	const MAX_BATCH_SIZE = 5000;
 
 	/**
+	 * Taille maximale d'un dump temporaire sur disque (octets).
+	 *
+	 * Les exports par lot ne concernent que des petites tables : un dump qui
+	 * depasse ce plafond signale un export qui a derape. On l'abandonne plutot
+	 * que de remplir le disque de l'hebergement.
+	 *
+	 * @var int
+	 */
+	const MAX_TEMP_FILE_BYTES = 2147483648;
+
+	/**
+	 * Espace disque libre minimal a preserver pendant un export (octets).
+	 *
+	 * @var int
+	 */
+	const MIN_FREE_DISK_BYTES = 536870912;
+
+	/**
 	 * Gere la requete de listing des tables.
 	 *
 	 * Retourne la liste des tables du site avec empreintes
@@ -83,8 +101,8 @@ class WBoard_Connector_Backup_Db {
 				continue;
 			}
 
-			// Detection de la cle primaire.
-			$primary_key = $this->get_primary_key( $table_name );
+			// Colonne de pagination (null si la PK n'est pas un entier mono-colonne).
+			$primary_key = $this->get_cursor_column( $table_name );
 
 			// Construction de l'empreinte.
 			$fingerprint = $this->build_fingerprint( $table );
@@ -181,7 +199,7 @@ class WBoard_Connector_Backup_Db {
 
 			// Securite : on ignore le primary_key du body HTTP (risque SQLi).
 			// On le deduit cote serveur via INFORMATION_SCHEMA.
-			$server_pk = $this->get_primary_key( $name );
+			$server_pk = $this->get_cursor_column( $name );
 
 			$validated[] = array(
 				'name'        => $name,
@@ -261,7 +279,7 @@ class WBoard_Connector_Backup_Db {
 		}
 
 		// On (re)deduit la PK cote serveur pour ne pas accepter une PK fournie par le client.
-		$primary_key = $this->get_primary_key( $name );
+		$primary_key = $this->get_cursor_column( $name );
 		$batch_size  = isset( $body['batch_size'] ) ? (int) $body['batch_size'] : self::DEFAULT_BATCH_SIZE;
 
 		$this->stream_single_table_to_response( $name, $primary_key, $batch_size );
@@ -315,7 +333,7 @@ class WBoard_Connector_Backup_Db {
 
 		// Boucle d'export streamee : MYSQLI_USE_RESULT (unbuffered) pour ne jamais
 		// charger un batch complet en memoire PHP.
-		$cursor     = 0;
+		$cursor     = null;
 		$total_rows = 0;
 
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
@@ -326,19 +344,8 @@ class WBoard_Connector_Backup_Db {
 				$wpdb->check_connection();
 			}
 
-			if ( ! empty( $primary_key ) ) {
-				$sql = $wpdb->prepare(
-					"SELECT * FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d",
-					$cursor,
-					$batch_size
-				);
-			} else {
-				$sql = $wpdb->prepare(
-					"SELECT * FROM `{$table}` LIMIT %d OFFSET %d",
-					$batch_size,
-					$cursor
-				);
-			}
+			$sql           = $this->build_batch_query( $table, $primary_key, $cursor, $batch_size );
+			$cursor_before = $cursor;
 
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.NotPrepared
 			$result = $wpdb->dbh->query( $sql, MYSQLI_USE_RESULT );
@@ -384,6 +391,12 @@ class WBoard_Connector_Backup_Db {
 			}
 
 			$total_rows += $batch_count;
+
+			if ( $this->is_cursor_stalled( $primary_key, $cursor_before, $cursor, $batch_count ) ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Stream-table %s interrompu : le curseur %s n\'avance plus (%d), dump incomplet', $table, $primary_key, $cursor ) );
+				break;
+			}
 
 			// Flush apres chaque batch : maintient la connexion active.
 			if ( function_exists( 'flush' ) ) {
@@ -452,7 +465,14 @@ class WBoard_Connector_Backup_Db {
 			$file_id  = wp_generate_password( 8, false, false );
 			$sql_path = $temp_dir . '/stream-' . $file_id . '.sql';
 
-			$this->export_full_table_to_file( $name, $pk, $batch_size, $sql_path );
+			// Un dump incomplet n'est jamais emis : la table manquante est
+			// detectee et rejouee par le backup-manager.
+			if ( ! $this->export_full_table_to_file( $name, $pk, $batch_size, $sql_path ) ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Table %s skippee : export incomplet (pk=%s, batch=%d)', $name, $pk ?? 'null', $batch_size ) );
+				@unlink( $sql_path );
+				continue;
+			}
 
 			$handle = @fopen( $sql_path, 'rb' );
 			if ( false === $handle ) {
@@ -532,7 +552,8 @@ class WBoard_Connector_Backup_Db {
 	 * @param int         $batch_size  Lignes par requete SQL.
 	 * @param string      $file_path   Chemin du fichier de sortie.
 	 *
-	 * @return void
+	 * @return bool True si la table a ete exportee en entier, false si l'export
+	 *              a ete interrompu (erreur SQL, curseur bloque, plafond disque).
 	 */
 	private function export_full_table_to_file( $table, $primary_key, $batch_size, $file_path ) {
 		global $wpdb;
@@ -541,7 +562,7 @@ class WBoard_Connector_Backup_Db {
 		if ( false === $handle ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			error_log( sprintf( '[WBoard DB] fopen echoue pour %s', $file_path ) );
-			return;
+			return false;
 		}
 
 		// Header SQL : CREATE TABLE.
@@ -558,11 +579,13 @@ class WBoard_Connector_Backup_Db {
 		// Export unbuffered : les lignes sont streamees une par une depuis MySQL
 		// sans charger le batch complet en memoire PHP.
 		// Pagination par curseur PK (ou OFFSET) pour ne pas bloquer la table.
-		$cursor     = 0;
+		$cursor     = null;
 		$total_rows = 0;
+		$complete   = false;
 
 		while ( true ) {
-			$batch_rows = $this->stream_rows_to_file( $handle, $table, $primary_key, $cursor, $batch_size );
+			$cursor_before = $cursor;
+			$batch_rows    = $this->stream_rows_to_file( $handle, $table, $primary_key, $cursor, $batch_size );
 
 			if ( false === $batch_rows ) {
 				// Erreur MySQL.
@@ -573,7 +596,18 @@ class WBoard_Connector_Backup_Db {
 
 			$total_rows += $batch_rows;
 
+			if ( $this->is_cursor_stalled( $primary_key, $cursor_before, $cursor, $batch_rows ) ) {
+				// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				error_log( sprintf( '[WBoard DB] Export %s interrompu : le curseur %s n\'avance plus (%d)', $table, $primary_key, $cursor ) );
+				break;
+			}
+
+			if ( ! $this->has_room_for_temp_file( $handle, $file_path ) ) {
+				break;
+			}
+
 			if ( $batch_rows < $batch_size ) {
+				$complete = true;
 				break;
 			}
 		}
@@ -582,7 +616,112 @@ class WBoard_Connector_Backup_Db {
 
 		$final_size = @filesize( $file_path );
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-		error_log( sprintf( '[WBoard DB] Export %s : %d lignes, %d octets (pk=%s, batch=%d)', $table, $total_rows, $final_size, $primary_key ?? 'null', $batch_size ) );
+		error_log( sprintf( '[WBoard DB] Export %s : %d lignes, %d octets (pk=%s, batch=%d, complet=%s)', $table, $total_rows, $final_size, $primary_key ?? 'null', $batch_size, $complete ? 'oui' : 'non' ) );
+
+		return $complete;
+	}
+
+	/**
+	 * Verifie qu'un dump temporaire peut continuer a grossir.
+	 *
+	 * Garde-fou contre le remplissage du disque de l'hebergement : plafond de
+	 * taille par dump + marge d'espace libre a preserver. PHP n'emet rien
+	 * pendant l'ecriture du fichier, donc il ne voit pas une connexion coupee
+	 * cote backup-manager : sans ce plafond, rien n'arrete un export qui derape.
+	 *
+	 * @param resource $handle    Handle du dump en cours d'ecriture.
+	 * @param string   $file_path Chemin du dump (pour le log et la mesure du disque).
+	 *
+	 * @return bool False si l'export doit s'arreter.
+	 */
+	private function has_room_for_temp_file( $handle, $file_path ) {
+		$written = ftell( $handle );
+
+		if ( false !== $written && $written > self::MAX_TEMP_FILE_BYTES ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( sprintf( '[WBoard DB] Export interrompu : %s depasse le plafond de %s', $file_path, size_format( self::MAX_TEMP_FILE_BYTES ) ) );
+			return false;
+		}
+
+		// disk_free_space() est desactivee chez certains hebergeurs : sans mesure, on continue.
+		$free = function_exists( 'disk_free_space' ) ? @disk_free_space( dirname( $file_path ) ) : false;
+
+		if ( false !== $free && $free < self::MIN_FREE_DISK_BYTES ) {
+			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+			error_log( sprintf( '[WBoard DB] Export interrompu : espace disque libre insuffisant (%s) pour %s', size_format( $free ), $file_path ) );
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Construit la requete SQL d'un batch d'export.
+	 *
+	 * Avec colonne de curseur : pagination par PK. Sans : LIMIT/OFFSET.
+	 * Le nom de table et la colonne sont valides en amont (regex + INFORMATION_SCHEMA),
+	 * prepare() ne sachant pas echapper les identifiants.
+	 *
+	 * @param string      $table         Nom de la table.
+	 * @param string|null $cursor_column Colonne de pagination (null = OFFSET).
+	 * @param int|null    $cursor        Derniere PK exportee ou offset (null = premier batch).
+	 * @param int         $batch_size    Nombre de lignes max.
+	 *
+	 * @return string La requete preparee.
+	 */
+	private function build_batch_query( $table, $cursor_column, $cursor, $batch_size ) {
+		global $wpdb;
+
+		if ( empty( $cursor_column ) ) {
+			return $wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT * FROM `{$table}` LIMIT %d OFFSET %d",
+				$batch_size,
+				(int) $cursor
+			);
+		}
+
+		// Premier batch sans borne : un `> 0` raterait les PK nulles ou negatives.
+		if ( null === $cursor ) {
+			return $wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				"SELECT * FROM `{$table}` ORDER BY `{$cursor_column}` ASC LIMIT %d",
+				$batch_size
+			);
+		}
+
+		return $wpdb->prepare(
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			"SELECT * FROM `{$table}` WHERE `{$cursor_column}` > %d ORDER BY `{$cursor_column}` ASC LIMIT %d",
+			$cursor,
+			$batch_size
+		);
+	}
+
+	/**
+	 * Detecte un curseur de pagination qui n'avance plus.
+	 *
+	 * Filet de securite : si un batch a renvoye des lignes sans faire progresser
+	 * le curseur, le batch suivant renverrait exactement les memes lignes, a
+	 * l'infini (incident Jardiner Malin, 700 Go de dump sur une PK datetime).
+	 *
+	 * @param string|null $cursor_column Colonne de pagination (null = OFFSET, jamais bloque).
+	 * @param int|null    $cursor_before Curseur avant le batch.
+	 * @param int|null    $cursor_after  Curseur apres le batch.
+	 * @param int         $batch_rows    Lignes renvoyees par le batch.
+	 *
+	 * @return bool True si la pagination est bloquee.
+	 */
+	private function is_cursor_stalled( $cursor_column, $cursor_before, $cursor_after, $batch_rows ) {
+		if ( empty( $cursor_column ) || $batch_rows <= 0 ) {
+			return false;
+		}
+
+		if ( null === $cursor_after ) {
+			return true;
+		}
+
+		return null !== $cursor_before && $cursor_after <= $cursor_before;
 	}
 
 	/**
@@ -595,7 +734,7 @@ class WBoard_Connector_Backup_Db {
 	 * @param resource    $handle      Handle du fichier de sortie.
 	 * @param string      $table       Nom de la table.
 	 * @param string|null $primary_key Colonne PK (null si pas de PK).
-	 * @param int         &$cursor     Curseur (PK ou offset), modifie en place.
+	 * @param int|null    &$cursor     Curseur (PK ou offset, null au premier batch), modifie en place.
 	 * @param int         $batch_size  Nombre de lignes max par requete.
 	 *
 	 * @return int|false Nombre de lignes ecrites, ou false en cas d'erreur.
@@ -608,20 +747,7 @@ class WBoard_Connector_Backup_Db {
 			$wpdb->check_connection();
 		}
 
-		// Construction de la requete SQL.
-		if ( ! empty( $primary_key ) ) {
-			$sql = $wpdb->prepare(
-				"SELECT * FROM `{$table}` WHERE `{$primary_key}` > %d ORDER BY `{$primary_key}` ASC LIMIT %d",
-				$cursor,
-				$batch_size
-			);
-		} else {
-			$sql = $wpdb->prepare(
-				"SELECT * FROM `{$table}` LIMIT %d OFFSET %d",
-				$batch_size,
-				$cursor
-			);
-		}
+		$sql = $this->build_batch_query( $table, $primary_key, $cursor, $batch_size );
 
 		// Requete unbuffered : MySQL envoie les lignes a la demande,
 		// PHP ne stocke qu'une seule ligne a la fois en memoire.
@@ -764,30 +890,55 @@ class WBoard_Connector_Backup_Db {
 	}
 
 	/**
-	 * Detecte la cle primaire d'une table.
+	 * Types SQL utilisables comme curseur de pagination.
+	 *
+	 * @var string[]
+	 */
+	const CURSOR_COLUMN_TYPES = array( 'tinyint', 'smallint', 'mediumint', 'int', 'bigint' );
+
+	/**
+	 * Retourne la colonne utilisable comme curseur de pagination d'une table.
+	 *
+	 * La pagination `WHERE pk > N` n'est fiable que sur une PK entiere et
+	 * mono-colonne. Sur une PK datetime/varchar le cast en entier fige le
+	 * curseur (boucle infinie), sur une PK composite la premiere colonne n'est
+	 * pas unique (lignes sautees a chaque frontiere de batch). Dans ces cas on
+	 * retourne null et l'export pagine par OFFSET.
 	 *
 	 * @param string $table_name Nom de la table.
 	 *
-	 * @return string|null Le nom de la colonne PK, ou null si pas de PK.
+	 * @return string|null Le nom de la colonne, ou null si pagination par OFFSET.
 	 */
-	private function get_primary_key( $table_name ) {
+	private function get_cursor_column( $table_name ) {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
-		$pk = $wpdb->get_var(
+		$pk_columns = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT COLUMN_NAME
-				FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-				WHERE TABLE_SCHEMA = %s
-					AND TABLE_NAME = %s
-					AND CONSTRAINT_NAME = 'PRIMARY'
-				LIMIT 1",
+				"SELECT k.COLUMN_NAME AS column_name, c.DATA_TYPE AS data_type
+				FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+				INNER JOIN INFORMATION_SCHEMA.COLUMNS c
+					ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
+					AND c.TABLE_NAME = k.TABLE_NAME
+					AND c.COLUMN_NAME = k.COLUMN_NAME
+				WHERE k.TABLE_SCHEMA = %s
+					AND k.TABLE_NAME = %s
+					AND k.CONSTRAINT_NAME = 'PRIMARY'",
 				DB_NAME,
 				$table_name
-			)
+			),
+			ARRAY_A
 		);
 
-		return $pk ? $pk : null;
+		if ( ! is_array( $pk_columns ) || 1 !== count( $pk_columns ) ) {
+			return null;
+		}
+
+		if ( ! in_array( strtolower( $pk_columns[0]['data_type'] ), self::CURSOR_COLUMN_TYPES, true ) ) {
+			return null;
+		}
+
+		return $pk_columns[0]['column_name'];
 	}
 
 	/**
