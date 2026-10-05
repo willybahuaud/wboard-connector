@@ -421,7 +421,8 @@ class WBoard_Connector_Backup_Db {
 			}
 		}
 
-		if ( $complete ) {
+		// Pas de trailer sans CREATE TABLE : le dump ne serait pas restaurable.
+		if ( $complete && $create_table ) {
 			echo $this->build_dump_trailer( $table, $total_rows ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
 			if ( function_exists( 'flush' ) ) {
 				flush();
@@ -593,8 +594,12 @@ class WBoard_Connector_Backup_Db {
 			fwrite( $handle, "DROP TABLE IF EXISTS `{$table}`;\n" );
 			fwrite( $handle, $create_table . ";\n\n" );
 		} else {
+			// Sans structure le dump n'est pas restaurable (vue SQL, table corrompue) :
+			// on le declare incomplet plutot que d'emettre un dump vide en apparence valide.
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
 			error_log( sprintf( '[WBoard DB] SHOW CREATE TABLE echoue pour %s (last_error: %s)', $table, $wpdb->last_error ) );
+			fclose( $handle );
+			return false;
 		}
 
 		// Export unbuffered : les lignes sont streamees une par une depuis MySQL
