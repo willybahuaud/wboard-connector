@@ -209,7 +209,7 @@ class WBoard_Connector_Api {
 			'debug'          => $collector->get_debug_status(),
 			'multisite'      => WBoard_Connector_Multisite::get_multisite_info(),
 			// Nom + empreinte uniquement : le board s'en sert pour savoir où ses patches de mitigation sont en place.
-			'mu_plugins'     => WBoard_Connector_Mu_Plugins::get_files(),
+			'mu_plugins'     => WBoard_Connector_Mu_Plugins::get_files_safely(),
 		);
 
 		return new WP_REST_Response( $data, 200 );

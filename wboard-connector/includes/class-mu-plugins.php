@@ -34,6 +34,24 @@ class WBoard_Connector_Mu_Plugins {
 	const MAX_HASHED_BYTES = 1048576;
 
 	/**
+	 * Retourne les fichiers de mu-plugins sans jamais faire échouer l'appelant.
+	 *
+	 * Cette liste est une information de confort pour le board. Si elle ne
+	 * peut pas être établie (fonction désactivée par l'hébergeur, droits,
+	 * mémoire), le statut du site doit quand même partir : sinon le board
+	 * verrait le site comme injoignable pour une donnée secondaire.
+	 *
+	 * @return array|null Liste de fichiers, ou null si elle n'a pas pu être établie.
+	 */
+	public static function get_files_safely() {
+		try {
+			return self::get_files();
+		} catch ( \Throwable $error ) {
+			return null;
+		}
+	}
+
+	/**
 	 * Retourne les fichiers PHP à la racine de mu-plugins.
 	 *
 	 * Seule la racine compte : WordPress ne charge pas automatiquement les
@@ -43,6 +61,11 @@ class WBoard_Connector_Mu_Plugins {
 	 */
 	public static function get_files() {
 		if ( ! defined( 'WPMU_PLUGIN_DIR' ) || ! is_dir( WPMU_PLUGIN_DIR ) ) {
+			return array();
+		}
+
+		// Certains hébergeurs désactivent glob() : on renonce plutôt que de provoquer une erreur fatale.
+		if ( ! function_exists( 'glob' ) ) {
 			return array();
 		}
 
