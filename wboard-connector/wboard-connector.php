@@ -75,6 +75,9 @@ function wboard_connector_init() {
 	// Module inventaire (route /inventory pour suggestions d'exclusions backup).
 	$inventory = new WBoard_Connector_Inventory( $security );
 
+	// Interdit aux caches de page de stocker les réponses de l'API.
+	$cache_control = new WBoard_Connector_Cache_Control();
+
 	// Enregistre les hooks.
 	$api->register_hooks();
 	$settings->register_hooks();
@@ -84,6 +87,7 @@ function wboard_connector_init() {
 	$policy->register_hooks();
 	$backup->register_hooks();
 	$inventory->register_hooks();
+	$cache_control->register_hooks();
 }
 add_action( 'plugins_loaded', 'wboard_connector_init' );
 
