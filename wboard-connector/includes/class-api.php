@@ -201,6 +201,8 @@ class WBoard_Connector_Api {
 			'backup'         => $collector->get_backup_status(),
 			'security'       => $collector->get_security_status(),
 			'admin_users'    => $collector->get_admin_users(),
+			// Clé absente sur un connecteur plus ancien : le board sait alors qu'il ne peut pas conclure.
+			'app_passwords'  => WBoard_Connector_Privileged_Accounts::get_application_passwords(),
 			'installed'      => array(
 				'plugins' => $collector->get_installed_plugins(),
 				'themes'  => $collector->get_installed_themes(),

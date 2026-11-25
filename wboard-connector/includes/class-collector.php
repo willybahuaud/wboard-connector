@@ -811,7 +811,7 @@ class WBoard_Connector_Collector {
 				'role'              => 'administrator',
 				'is_super_admin'    => false,
 				'can_network_admin' => false,
-			);
+			) + WBoard_Connector_Privileged_Accounts::describe_user( $user );
 		}
 
 		return $users;
@@ -834,7 +834,7 @@ class WBoard_Connector_Collector {
 				'role'              => 'super_admin',
 				'is_super_admin'    => true,
 				'can_network_admin' => true,
-			);
+			) + WBoard_Connector_Privileged_Accounts::describe_user( $user );
 		}
 
 		return $users;
