@@ -30,6 +30,20 @@ class WBoard_Connector_Privileged_Accounts {
 	const MAX_APPLICATION_PASSWORDS = 200;
 
 	/**
+	 * Nombre maximal de sites regardés pour trouver le rôle d'un utilisateur en multisite.
+	 *
+	 * @var int
+	 */
+	const MAX_SITES_PER_USER = 50;
+
+	/**
+	 * Rôles natifs, du plus fort au plus faible.
+	 *
+	 * @var string[]
+	 */
+	const ROLES_BY_STRENGTH = array( 'administrator', 'editor', 'author', 'contributor', 'subscriber' );
+
+	/**
 	 * Complète la fiche d'un administrateur.
 	 *
 	 * @param WP_User $user Utilisateur.
@@ -92,13 +106,52 @@ class WBoard_Connector_Privileged_Accounts {
 		return array(
 			'user_id'      => $user->ID,
 			'username'     => $user->user_login,
-			'role'         => is_super_admin( $user->ID ) && is_multisite() ? 'super_admin' : (string) ( $user->roles[0] ?? '' ),
+			'role'         => self::get_strongest_role( $user ),
 			'uuid'         => (string) ( $password['uuid'] ?? '' ),
 			'name'         => (string) ( $password['name'] ?? '' ),
 			'created_at'   => self::to_iso( $password['created'] ?? null ),
 			'last_used_at' => self::to_iso( $password['last_used'] ?? null ),
 			'last_ip'      => (string) ( $password['last_ip'] ?? '' ),
 		);
+	}
+
+	/**
+	 * Retourne le rôle le plus élevé d'un utilisateur.
+	 *
+	 * En multisite, un rôle ne vaut que pour un site : l'administrateur d'un
+	 * sous-site est simple abonné vu du site principal. On regarde donc tous
+	 * ses sites, sinon le board afficherait « abonné » pour un compte qui
+	 * administre une filiale.
+	 *
+	 * @param WP_User $user Utilisateur.
+	 *
+	 * @return string Rôle, ou chaîne vide s'il n'en a aucun.
+	 */
+	private static function get_strongest_role( WP_User $user ) {
+		if ( ! is_multisite() ) {
+			return (string) ( reset( $user->roles ) ?: '' );
+		}
+
+		if ( is_super_admin( $user->ID ) ) {
+			return 'super_admin';
+		}
+
+		global $wpdb;
+
+		$roles = array();
+		foreach ( array_slice( get_blogs_of_user( $user->ID ), 0, self::MAX_SITES_PER_USER ) as $site ) {
+			// Lecture directe de la méta du site : pas de switch_to_blog() par utilisateur.
+			$capabilities = get_user_meta( $user->ID, $wpdb->get_blog_prefix( $site->userblog_id ) . 'capabilities', true );
+			$roles        = array_merge( $roles, array_keys( array_filter( (array) $capabilities ) ) );
+		}
+
+		foreach ( self::ROLES_BY_STRENGTH as $role ) {
+			if ( in_array( $role, $roles, true ) ) {
+				return $role;
+			}
+		}
+
+		return (string) ( reset( $roles ) ?: '' );
 	}
 
 	/**
